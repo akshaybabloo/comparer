@@ -54,5 +54,7 @@ export type DiffRequest = {
 };
 
 export type DiffResponse =
+  /** Sent once, after the worker has installed its message handler. */
+  | { type: 'ready' }
   | { type: 'result'; id: number; result: DiffResult }
   | { type: 'error'; id: number; message: string };

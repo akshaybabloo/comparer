@@ -26,6 +26,9 @@ export class DiffCancelled extends Error {
  */
 export class DiffRunner {
   #worker: Worker | null = null;
+  #ready = false;
+  /** Held until the worker reports ready — see `#spawn`. */
+  #queued: DiffRequest | null = null;
   #nextId = 1;
   #pending: {
     id: number;
@@ -38,9 +41,23 @@ export class DiffRunner {
       type: 'module',
       name: 'comparer-diff',
     });
+    this.#ready = false;
 
     worker.onmessage = (event: MessageEvent<DiffResponse>) => {
       const response = event.data;
+
+      // A request posted before the worker module finished evaluating is
+      // silently dropped rather than queued, so nothing is sent until the
+      // worker says it is listening.
+      if (response.type === 'ready') {
+        this.#ready = true;
+        if (this.#queued) {
+          worker.postMessage(this.#queued);
+          this.#queued = null;
+        }
+        return;
+      }
+
       const pending = this.#pending;
       // A late reply from a run we already gave up on.
       if (!pending || pending.id !== response.id) return;
@@ -65,6 +82,8 @@ export class DiffRunner {
   #teardown() {
     this.#worker?.terminate();
     this.#worker = null;
+    this.#ready = false;
+    this.#queued = null;
   }
 
   run(oldText: string, newText: string, options: DiffOptions = {}): Promise<DiffResult> {
@@ -88,7 +107,9 @@ export class DiffRunner {
         context: options.context ?? DEFAULTS.context,
         maxRows: options.maxRows ?? DEFAULTS.maxRows,
       };
-      worker.postMessage(request);
+
+      if (this.#ready) worker.postMessage(request);
+      else this.#queued = request;
     });
   }
 
