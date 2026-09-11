@@ -1,7 +1,6 @@
 <script lang="ts">
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
-  import { Separator } from '$lib/components/ui/separator';
   import { Switch } from '$lib/components/ui/switch';
   import * as ToggleGroup from '$lib/components/ui/toggle-group';
   import DiffView from '$lib/components/DiffView.svelte';
@@ -90,9 +89,16 @@
       <span class="text-sm font-semibold tracking-tight">Comparer</span>
     </div>
 
-    <Separator orientation="vertical" class="h-5" />
-
-    <ToggleGroup.Root type="single" bind:value={view} variant="outline" size="sm">
+    <!-- A get/set binding rather than a plain `bind:`: a single-select toggle
+         group clears itself when you click the item that is already active,
+         which would leave the app showing neither Editors nor Diff. The setter
+         drops that empty value, so the current view always stays selected. -->
+    <ToggleGroup.Root
+      type="single"
+      bind:value={() => view, (next) => { if (next === 'edit' || next === 'diff') view = next; }}
+      variant="outline"
+      size="sm"
+    >
       <ToggleGroup.Item value="edit" aria-label="Show the editors">Editors</ToggleGroup.Item>
       <ToggleGroup.Item value="diff" aria-label="Show the diff" disabled={!result}>
         Diff
@@ -100,7 +106,14 @@
     </ToggleGroup.Root>
 
     {#if view === 'diff' && result}
-      <ToggleGroup.Root type="single" bind:value={diffMode} variant="outline" size="sm">
+      <ToggleGroup.Root
+        type="single"
+        bind:value={
+          () => diffMode, (next) => { if (next === 'unified' || next === 'split') diffMode = next; }
+        }
+        variant="outline"
+        size="sm"
+      >
         <ToggleGroup.Item value="unified" aria-label="Unified diff">Unified</ToggleGroup.Item>
         <ToggleGroup.Item value="split" aria-label="Side by side diff">Split</ToggleGroup.Item>
       </ToggleGroup.Root>
