@@ -1,8 +1,58 @@
+@import '@fontsource-variable/inter';
+@import 'tailwindcss';
+
+/*
+ * Dark-only palette. The app is a diff tool, so the surfaces stay out of the
+ * way and the only saturated colour in the UI is the diff itself.
+ */
+@theme {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+
+  --color-surface-0: oklch(0.17 0.012 260);
+  --color-surface-1: oklch(0.21 0.013 260);
+  --color-surface-2: oklch(0.25 0.014 260);
+  --color-surface-3: oklch(0.31 0.016 260);
+
+  --color-ink: oklch(0.93 0.005 260);
+  --color-ink-dim: oklch(0.72 0.012 260);
+  --color-ink-faint: oklch(0.56 0.014 260);
+
+  --color-accent: oklch(0.72 0.14 235);
+
+  /* Diff colours: hue carries the meaning, lightness keeps text readable. */
+  --color-add-bg: oklch(0.28 0.062 152);
+  --color-add-bg-strong: oklch(0.42 0.11 152);
+  --color-add-ink: oklch(0.87 0.13 152);
+  --color-add-gutter: oklch(0.5 0.09 152);
+
+  --color-del-bg: oklch(0.29 0.06 18);
+  --color-del-bg-strong: oklch(0.42 0.12 18);
+  --color-del-ink: oklch(0.85 0.12 18);
+  --color-del-gutter: oklch(0.52 0.1 18);
+}
+
+html {
+  color-scheme: dark;
+}
+
 body {
-  font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
-    sans-serif;
-  margin: auto;
-  max-width: 38rem;
-  padding: 2rem;
+  margin: 0;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--color-surface-0);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  height: 100vh;
+}
+
+/* Scrollbars, so they don't punch a light hole in a dark app. */
+* {
+  scrollbar-color: var(--color-surface-3) transparent;
+  scrollbar-width: thin;
 }

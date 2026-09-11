@@ -2,4 +2,6 @@ allowBuilds:
   electron-winstaller: true
   esbuild: true
 blockExoticSubdeps: false
+minimumReleaseAgeExclude:
+  - comparer-ts@1.0.0
 nodeLinker: hoisted
