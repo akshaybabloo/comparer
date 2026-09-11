@@ -25,22 +25,80 @@ export type RenderedLine = {
  * height of every row has to be known to virtualise the list, including the
  * ones currently scrolled out of view.
  */
-export function columnsOf(row: DiffRow | null): number {
-  if (!row) return 0;
-  let columns = 0;
+const columnCache = new WeakMap<DiffRow, number>();
+const tabCache = new WeakMap<DiffRow, boolean>();
+
+/**
+ * Whether the row contains tabs, whose width depends on the column they start
+ * at. Cached: answering it means scanning the row, and a row can be megabytes.
+ */
+export function hasTabs(row: DiffRow): boolean {
+  const cached = tabCache.get(row);
+  if (cached !== undefined) return cached;
+  let found = false;
   for (const segment of row.segments) {
-    const value = segment.value;
-    // The per-character walk is only needed when tabs are present; otherwise
-    // the length is the column count, which keeps this cheap across 100k rows.
-    if (value.includes('\t')) {
-      for (const char of value) {
-        columns += char === '\t' ? TAB_SIZE - (columns % TAB_SIZE) : 1;
-      }
-    } else {
-      columns += value.length;
+    if (segment.value.includes('\t')) {
+      found = true;
+      break;
     }
   }
+  tabCache.set(row, found);
+  return found;
+}
+
+export function columnsOf(row: DiffRow | null): number {
+  if (!row) return 0;
+  const cached = columnCache.get(row);
+  if (cached !== undefined) return cached;
+
+  let columns = 0;
+  if (hasTabs(row)) {
+    for (const segment of row.segments) {
+      for (const char of segment.value) {
+        columns += char === '\t' ? TAB_SIZE - (columns % TAB_SIZE) : 1;
+      }
+    }
+  } else {
+    // Without tabs a character is a column, so summing lengths is enough — and
+    // that keeps this cheap across hundreds of thousands of rows.
+    for (const segment of row.segments) columns += segment.value.length;
+  }
+
+  columnCache.set(row, columns);
   return columns;
+}
+
+/**
+ * The part of a row lying between two columns.
+ *
+ * This is what makes a single enormous line scrollable: a 10 MB line with no
+ * newlines is one row, so row-level windowing has nothing to choose between
+ * and the whole thing lands in the DOM. Slicing it by column lets the view
+ * render only the wrapped lines actually on screen.
+ *
+ * Only valid for rows without tabs, where a column is a character — see
+ * `hasTabs`.
+ */
+export function sliceByColumns(row: DiffRow, from: number, to: number): RenderedPart[] {
+  const parts: RenderedPart[] = [];
+  let offset = 0;
+
+  for (const segment of row.segments) {
+    const start = offset;
+    const end = start + segment.value.length;
+    offset = end;
+
+    if (end <= from) continue;
+    if (start >= to) break;
+
+    parts.push({
+      kind: 'text',
+      emphasized: segment.emphasized,
+      value: segment.value.slice(Math.max(0, from - start), Math.min(segment.value.length, to - start)),
+    });
+  }
+
+  return parts;
 }
 
 /** Every segment of the row, in full — nothing is clipped or hidden. */

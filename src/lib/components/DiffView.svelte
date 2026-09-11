@@ -3,10 +3,13 @@
   import type { DiffResult, DiffRow } from '$lib/diff-types';
   import {
     columnsOf,
+    hasTabs,
     renderSegments,
+    sliceByColumns,
     TAB_SIZE,
     toSplitRows,
     toUnifiedRows,
+    type RenderedPart,
   } from '$lib/diff-view-model';
 
   type Props = {
@@ -65,6 +68,49 @@
     if (item.kind === 'collapsed') return LINE_HEIGHT;
     if (item.kind === 'row') return linesFor(columnsOf(item.row)) * LINE_HEIGHT;
     return Math.max(linesFor(columnsOf(item.left)), linesFor(columnsOf(item.right))) * LINE_HEIGHT;
+  }
+
+  /**
+   * A row taller than the viewport is windowed in its own right: only the
+   * wrapped lines on screen are rendered, offset into a container of the row's
+   * full height.
+   *
+   * Row-level windowing cannot help a file with no newlines — that is a single
+   * row, so there is nothing to choose between and all of it would land in the
+   * DOM. This is the same technique one level down.
+   */
+  type RowSlice = { top: number; parts: RenderedPart[] } | null;
+
+  function sliceFor(index: number, row: DiffRow | null): RowSlice {
+    if (!row || columnsPerLine === Infinity || viewportHeight <= 0) return null;
+
+    const lines = linesFor(columnsOf(row));
+    // Rows that comfortably fit are cheaper to render whole than to slice.
+    if (lines <= Math.ceil(viewportHeight / LINE_HEIGHT) + OVERSCAN * 2) return null;
+    // Column maths assumes one character per column, which tabs break.
+    if (hasTabs(row)) return null;
+
+    const rowTop = offsets[index];
+    // Clamped into the row, so a row sitting entirely above or below the
+    // viewport yields an empty range and draws no text at all. Returning null
+    // here instead would fall back to rendering the row whole — which for a
+    // 10 MB line is the entire problem this exists to solve.
+    const firstLine = Math.min(
+      lines,
+      Math.max(0, Math.floor((scrollTop - rowTop) / LINE_HEIGHT) - OVERSCAN),
+    );
+    const lastLine = Math.max(
+      firstLine,
+      Math.min(lines, Math.ceil((scrollTop + viewportHeight - rowTop) / LINE_HEIGHT) + OVERSCAN),
+    );
+
+    return {
+      top: firstLine * LINE_HEIGHT,
+      parts:
+        lastLine > firstLine
+          ? sliceByColumns(row, firstLine * columnsPerLine, lastLine * columnsPerLine)
+          : [],
+    };
   }
 
   /**
@@ -147,9 +193,8 @@
   {@attach probe}>0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000</span
 >
 
-{#snippet lineContent(row: DiffRow)}
-  {@const rendered = renderSegments(row)}
-  {#each rendered.parts as part, index (index)}
+{#snippet inlineParts(row: DiffRow, parts: RenderedPart[], trailing: boolean)}
+  {#each parts as part, index (index)}
     {#if part.emphasized}
       <!-- The words that actually changed within a changed line. -->
       <span class={row.tag === 'insert' ? 'bg-add-bg-strong rounded-xs' : 'bg-del-bg-strong rounded-xs'}
@@ -157,9 +202,29 @@
       >
     {:else}{part.value}{/if}
   {/each}
-  {#if row.missingNewline}
+  {#if trailing && row.missingNewline}
     <span class="text-muted-foreground italic"> ⏎ no newline at end of file</span>
   {/if}
+{/snippet}
+
+<!-- One text cell: the whole row, or just the wrapped lines on screen when the
+     row is taller than the viewport. -->
+{#snippet cell(row: DiffRow | null, index: number, extra: string)}
+  {@const slice = row ? sliceFor(index, row) : null}
+  <span
+    class="{bodyClass(row)} {textClass} {extra} {slice ? 'relative block overflow-hidden' : ''}"
+    style:height={slice ? `${heightOf(index)}px` : undefined}
+  >
+    {#if row}
+      {#if slice}
+        <span class="absolute inset-x-0 pr-4" style:top="{slice.top}px">
+          {@render inlineParts(row, slice.parts, false)}
+        </span>
+      {:else}
+        {@render inlineParts(row, renderSegments(row).parts, true)}
+      {/if}
+    {/if}
+  </span>
 {/snippet}
 
 {#if result.identical}
@@ -183,7 +248,8 @@
     <!-- Spacer carries the full scroll height; only `visible` is in the DOM. -->
     <div style:height="{totalHeight}px" class="relative {wrap ? 'w-full' : 'w-max min-w-full'}">
       <div style:transform="translateY({offsetY}px)" class="absolute inset-x-0 top-0">
-        {#each visible as item (item.key)}
+        {#each visible as item, offset (item.key)}
+          {@const index = firstVisible + offset}
           {#if item.kind === 'collapsed'}
             <div
               class="bg-muted/40 text-muted-foreground flex items-center gap-2 px-3 select-none"
@@ -214,9 +280,7 @@
               <span class="{bodyClass(item.row)} w-4 shrink-0 text-center select-none">
                 {marker(item.row)}
               </span>
-              <span class="{bodyClass(item.row)} {textClass} pr-4">
-                {@render lineContent(item.row)}
-              </span>
+              {@render cell(item.row, index, 'pr-4')}
             </div>
           {:else}
             <div class="flex">
@@ -228,9 +292,7 @@
               >
                 {item.left?.oldLine ?? ''}
               </span>
-              <span class="{bodyClass(item.left)} {textClass} border-r pr-4">
-                {#if item.left}{@render lineContent(item.left)}{/if}
-              </span>
+              {@render cell(item.left, index, 'border-r pr-4')}
 
               <!-- Right / changed -->
               <span
@@ -240,9 +302,7 @@
               >
                 {item.right?.newLine ?? ''}
               </span>
-              <span class="{bodyClass(item.right)} {textClass} pr-4">
-                {#if item.right}{@render lineContent(item.right)}{/if}
-              </span>
+              {@render cell(item.right, index, 'pr-4')}
             </div>
           {/if}
         {/each}
