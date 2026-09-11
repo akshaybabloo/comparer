@@ -5,7 +5,6 @@
   import * as ToggleGroup from '$lib/components/ui/toggle-group';
   import DiffView from '$lib/components/DiffView.svelte';
   import Editor from '$lib/components/Editor.svelte';
-  import { DiffCancelled, DiffRunner } from '$lib/diff-client';
   import type { DiffResult } from '$lib/diff-types';
   import { formatCount } from '$lib/format';
   import { PaneState } from '$lib/panes.svelte';
@@ -15,7 +14,6 @@
 
   const left = new PaneState();
   const right = new PaneState();
-  const runner = new DiffRunner();
 
   let view = $state<'edit' | 'diff'>('edit');
   let diffMode = $state<'unified' | 'split'>('unified');
@@ -26,36 +24,55 @@
   let error = $state('');
 
   const canCompare = $derived(!left.isEmpty || !right.isEmpty);
+  // Nothing to exchange when both sides are blank.
+  const canSwap = $derived(!left.isEmpty || !right.isEmpty);
+
+  /** Guards against an older comparison landing after a newer one. */
+  let runToken = 0;
 
   async function compare() {
-    if (!canCompare) return;
+    if (!canCompare || running) return;
+    const token = ++runToken;
     running = true;
     error = '';
     try {
-      result = await runner.run(left.text, right.text);
+      // Panes that were only read keep their text in the service, so nothing
+      // crosses the boundary here; only an edited pane pushes its text back.
+      const [leftId, rightId] = await Promise.all([left.sync(), right.sync()]);
+      const next = await window.comparer.diff(leftId, rightId);
+      if (token !== runToken) return;
+      result = next;
       view = 'diff';
     } catch (cause) {
-      // A superseded run is not a failure; its replacement is already going.
-      if (cause instanceof DiffCancelled) return;
+      if (token !== runToken) return;
       error = cause instanceof Error ? cause.message : 'Comparison failed';
       result = null;
     } finally {
-      running = false;
+      if (token === runToken) running = false;
     }
   }
 
+  /** Exchanges the two panes wholesale, including their service documents. */
   function swap() {
-    const text = left.text;
-    const filename = left.filename;
-    const languageId = left.languageId;
+    const snapshot = (pane: PaneState) => ({
+      text: pane.text,
+      filename: pane.filename,
+      languageId: pane.languageId,
+      docId: pane.docId,
+      totalLines: pane.totalLines,
+      loadedBytes: pane.loadedBytes,
+      totalSize: pane.totalSize,
+      fullyLoaded: pane.fullyLoaded,
+      dirty: pane.dirty,
+    });
+    const restore = (pane: PaneState, from: ReturnType<typeof snapshot>) => {
+      Object.assign(pane, from);
+    };
 
-    left.text = right.text;
-    left.filename = right.filename;
-    left.languageId = right.languageId;
-
-    right.text = text;
-    right.filename = filename;
-    right.languageId = languageId;
+    const a = snapshot(left);
+    const b = snapshot(right);
+    restore(left, b);
+    restore(right, a);
   }
 
   /**
@@ -67,7 +84,6 @@
     if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
   }
 
-  $effect(() => () => runner.dispose());
 </script>
 
 <svelte:window
@@ -143,7 +159,7 @@
       </label>
 
       {#if view === 'edit'}
-        <Button variant="ghost" size="sm" onclick={swap} title="Swap sides">
+        <Button variant="ghost" size="sm" onclick={swap} disabled={!canSwap} title="Swap sides">
           <ArrowLeftRightIcon class="size-3.5" />
           Swap
         </Button>

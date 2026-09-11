@@ -34,6 +34,13 @@ const config: ForgeConfig = {
           config: 'vite.preload.config.mts',
           target: 'preload',
         },
+        {
+          // The diff service runs in a Node utilityProcess, so it builds the
+          // same way the main process does.
+          entry: 'src/services/diff-service.ts',
+          config: 'vite.service.config.mts',
+          target: 'main',
+        },
       ],
       renderer: [
         {

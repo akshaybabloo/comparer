@@ -8,7 +8,7 @@
   import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
   import { bracketMatching, foldGutter, indentOnInput, indentUnit } from '@codemirror/language';
   import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
-  import { Compartment, EditorState } from '@codemirror/state';
+  import { Annotation, Compartment, EditorState } from '@codemirror/state';
   import {
     EditorView,
     drawSelection,
@@ -32,6 +32,14 @@
 
   let { pane, placeholder, wrap }: Props = $props();
 
+  /**
+   * Marks transactions this component dispatched itself — streaming a chunk in,
+   * or replacing the document after a drop. Without it the update listener
+   * treats our own writes as user edits, which marks the pane dirty and
+   * "fully loaded", silently ending the streaming of the rest of the file.
+   */
+  const Programmatic = Annotation.define<boolean>();
+
   const languageCompartment = new Compartment();
   const editableCompartment = new Compartment();
   const wrapCompartment = new Compartment();
@@ -43,6 +51,28 @@
     LANGUAGES.find((language) => language.id === pane.languageId)?.label ?? 'Plain text',
   );
   const isDraggingOver = $derived(dragDepth > 0);
+
+  /**
+   * Requests the next slice when the reader is within a screenful of the bottom.
+   *
+   * Deliberately measured from the scroll position rather than the editor's
+   * viewport range: a document of one enormous line has a viewport covering the
+   * whole document at all times, so a range-based check would report "at the
+   * end" immediately and pull in the entire file — exactly the case streaming
+   * exists for.
+   */
+  function maybeLoadMore(instance: EditorView) {
+    if (pane.fullyLoaded || pane.loading) return;
+    const el = instance.scrollDOM;
+    // Requiring a real scroll away from the top is what stops this cascading:
+    // appending a chunk changes the layout, which fires `scroll` again, and a
+    // document of one long line is a single unscrollable visual line until
+    // wrapping applies — so a pure "near the bottom" test is true immediately
+    // and would pull the entire file in at once.
+    if (el.scrollTop <= 0) return;
+    const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (fromBottom < el.clientHeight) void pane.loadMore();
+  }
 
   /**
    * Mounts CodeMirror. An attachment rather than `onMount` so setup and
@@ -76,8 +106,13 @@
           wrapCompartment.of([]),
           ...darkEditorExtensions,
           EditorView.updateListener.of((update) => {
-            if (!update.docChanged) return;
-            pane.setTextFromEditor(update.state.doc.toString());
+            const ours = update.transactions.some((tr) => tr.annotation(Programmatic));
+            if (update.docChanged && !ours) pane.setTextFromEditor(update.state.doc.toString());
+          }),
+          EditorView.domEventHandlers({
+            scroll: (_event, instance) => {
+              maybeLoadMore(instance);
+            },
           }),
         ],
       }),
@@ -97,11 +132,19 @@
     const text = pane.text;
     const instance = view;
     if (!instance) return;
-    if (instance.state.doc.toString() === text) return;
+
+    const current = instance.state.doc.toString();
+    if (current === text) return;
+
+    // Streaming appends to the end; replacing the whole document instead would
+    // throw away the cursor and the scroll position on every chunk.
+    const appended = text.length > current.length && text.startsWith(current);
     instance.dispatch({
-      changes: { from: 0, to: instance.state.doc.length, insert: text },
-      selection: { anchor: 0 },
-      scrollIntoView: true,
+      changes: appended
+        ? { from: current.length, insert: text.slice(current.length) }
+        : { from: 0, to: instance.state.doc.length, insert: text },
+      selection: appended ? undefined : { anchor: 0 },
+      annotations: Programmatic.of(true),
     });
   });
 
@@ -122,8 +165,11 @@
     };
   });
 
+  // Typing into a partially streamed document would leave the unseen tail
+  // behind, so the rest is pulled in on the first attempt to edit.
   $effect(() => {
-    const readOnly = pane.loading;
+    const streaming = !pane.fullyLoaded;
+    const readOnly = pane.loading || streaming;
     view?.dispatch({
       effects: editableCompartment.reconfigure(EditorView.editable.of(!readOnly)),
     });
@@ -206,6 +252,18 @@
       <span class="text-muted-foreground shrink-0 text-[11px] tabular-nums">
         {formatCount(pane.lineCount)} lines · {formatBytes(pane.byteLength)}
       </span>
+    {/if}
+
+    {#if !pane.fullyLoaded}
+      <!-- The document is streaming in; editing needs all of it. -->
+      <button
+        type="button"
+        onclick={() => pane.loadAll()}
+        class="border-brand/40 text-brand hover:bg-brand/10 shrink-0 rounded border px-1.5 py-0.5 text-[11px] tabular-nums transition-colors"
+        title="The rest of this file has not been loaded yet. Editing needs the whole document."
+      >
+        {formatBytes(pane.pendingBytes)} more — load all to edit
+      </button>
     {/if}
 
     <div class="ml-auto flex shrink-0 items-center gap-1.5">
