@@ -80,7 +80,14 @@
 />
 
 <div class="flex h-full flex-col">
-  <header class="bg-card flex h-11 shrink-0 items-center gap-3 border-b px-3">
+  <!-- The window is frameless, so this header is the title bar: dragging it
+       moves the window, and every control in it opts out with `no-drag`. The
+       `titlebar-area-*` variables are the space the OS window controls leave
+       free — on the left on macOS, on the right elsewhere — and fall back to
+       plain padding when there are none. -->
+  <header
+    class="bg-card flex h-11 shrink-0 items-center gap-3 border-b pr-[calc(100vw_-_env(titlebar-area-x,0px)_-_env(titlebar-area-width,100vw)_+_0.75rem)] pl-[calc(env(titlebar-area-x,0px)_+_0.75rem)] select-none [app-region:drag]"
+  >
     <div class="flex items-center gap-2">
       <GitCompareIcon class="text-brand size-4" />
       <span class="text-sm font-semibold tracking-tight">Comparer</span>
@@ -95,6 +102,7 @@
       bind:value={() => view, (next) => { if (next === 'edit' || next === 'diff') view = next; }}
       variant="outline"
       size="sm"
+      class="[app-region:no-drag]"
     >
       <ToggleGroup.Item value="edit" aria-label="Show the editors">Editors</ToggleGroup.Item>
       <ToggleGroup.Item value="diff" aria-label="Show the diff" disabled={!result}>
@@ -110,6 +118,7 @@
         }
         variant="outline"
         size="sm"
+        class="[app-region:no-drag]"
       >
         <ToggleGroup.Item value="unified" aria-label="Unified diff">Unified</ToggleGroup.Item>
         <ToggleGroup.Item value="split" aria-label="Side by side diff">Split</ToggleGroup.Item>
@@ -133,7 +142,7 @@
       </div>
     {/if}
 
-    <div class="ml-auto flex items-center gap-3">
+    <div class="ml-auto flex items-center gap-3 [app-region:no-drag]">
       <label class="text-muted-foreground flex items-center gap-2 text-xs">
         <Switch bind:checked={wrap} aria-label="Wrap long lines" />
         Wrap

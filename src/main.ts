@@ -103,6 +103,15 @@ const applyContentSecurityPolicy = () => {
   });
 };
 
+/**
+ * The app header is `h-11` (44px) including its 1px bottom border. The controls
+ * stop just above that border, so it runs unbroken beneath them.
+ */
+const TITLE_BAR_HEIGHT = 43;
+/** The dark `--card` and `--foreground` tokens, which the header is painted with. */
+const TITLE_BAR_COLOR = '#171717';
+const TITLE_BAR_SYMBOL_COLOR = '#fafafa';
+
 const createWindow = () => {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -110,7 +119,22 @@ const createWindow = () => {
     height: 900,
     minWidth: 720,
     minHeight: 480,
-    backgroundColor: '#252525',
+    backgroundColor: '#0a0a0a',
+    // Frameless, with the app header acting as the title bar. The window
+    // controls are still the operating system's own rather than drawn by the
+    // app: traffic lights on macOS, caption buttons on Windows (keeping Snap
+    // Layouts), and theme-drawn buttons on Linux that follow the desktop's
+    // button layout.
+    titleBarStyle: 'hidden',
+    // Also what enables the `titlebar-area-*` CSS environment variables the
+    // header uses to keep clear of the controls, on whichever side they are.
+    titleBarOverlay: {
+      color: TITLE_BAR_COLOR,
+      symbolColor: TITLE_BAR_SYMBOL_COLOR,
+      height: TITLE_BAR_HEIGHT,
+    },
+    // Centres the traffic lights vertically in the taller header.
+    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 16, y: 15 } } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
     },
