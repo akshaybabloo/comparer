@@ -1,5 +1,5 @@
 import { detectLanguage, languageById, LANGUAGES, PLAIN_TEXT, type Language } from './languages';
-import type { DocumentId } from '../shared/protocol';
+import type { DocumentId, DocumentInfo } from '../shared/protocol';
 
 /**
  * Above this size the grammar is dropped and the pane renders as plain text.
@@ -27,7 +27,11 @@ export class PaneState {
   /** The slice currently loaded in the editor — a prefix of the document. */
   text = $state('');
   filename = $state('');
+  /** Where the document was opened from, or null for text typed into the app. */
+  path = $state<string | null>(null);
   loading = $state(false);
+  /** What the loading overlay says, e.g. "Reading notes.txt…". */
+  loadingLabel = $state('');
   error = $state('');
 
   /** Service-side document, or null for a pane that has never held one. */
@@ -59,23 +63,41 @@ export class PaneState {
   readonly isEmpty = $derived(this.docId === null && this.text.length === 0);
   readonly pendingBytes = $derived(Math.max(0, this.totalSize - this.loadedBytes));
 
-  #reset(info: { id: DocumentId; name: string; size: number; lineCount: number }) {
+  #reset(info: DocumentInfo) {
     this.docId = info.id;
     this.filename = info.name;
+    this.path = info.path;
     this.totalSize = info.size;
     this.totalLines = info.lineCount;
     this.dirty = false;
     this.error = '';
   }
 
-  async loadFile(file: File) {
+  loadFile(file: File) {
+    return this.#open(
+      () => window.comparer.openDroppedFile(file),
+      `Reading ${file.name}…`,
+      `Could not read ${file.name}`,
+    );
+  }
+
+  /** Opens a file chosen in the native picker. Cancelling leaves the pane as it was. */
+  pickFile() {
+    return this.#open(() => window.comparer.pickFile(), 'Opening file…', 'Could not open the file');
+  }
+
+  async #open(request: () => Promise<DocumentInfo | null>, label: string, failure: string) {
     this.loading = true;
+    this.loadingLabel = label;
     this.error = '';
     try {
       // Main reads the file; its contents never cross into the renderer except
       // as the slices requested below.
-      const info = await window.comparer.openDroppedFile(file);
+      const info = await request();
+      if (!info) return;
+      const previous = this.docId;
       this.#reset(info);
+      if (previous && previous !== info.id) void window.comparer.close(previous);
       this.#languagePinned = false;
       this.languageId = detectLanguage(info.name).id;
 
@@ -84,7 +106,7 @@ export class PaneState {
       this.loadedBytes = chunk.to;
       this.fullyLoaded = chunk.atEnd;
     } catch (error) {
-      this.error = error instanceof Error ? error.message : `Could not read ${file.name}`;
+      this.error = error instanceof Error ? error.message : failure;
     } finally {
       this.loading = false;
     }
@@ -94,6 +116,7 @@ export class PaneState {
   async loadMore() {
     if (this.fullyLoaded || this.loading || !this.docId || this.dirty) return;
     this.loading = true;
+    this.loadingLabel = `Reading ${this.filename}…`;
     try {
       const chunk = await window.comparer.readChunk(this.docId, this.loadedBytes, CHUNK_BYTES);
       if (chunk.text) this.text += chunk.text;
@@ -152,6 +175,7 @@ export class PaneState {
     const snapshot = (pane: PaneState) => ({
       text: pane.text,
       filename: pane.filename,
+      path: pane.path,
       languageId: pane.languageId,
       languagePinned: pane.#languagePinned,
       docId: pane.docId,
@@ -176,6 +200,7 @@ export class PaneState {
     const previous = this.docId;
     this.text = '';
     this.filename = '';
+    this.path = null;
     this.languageId = PLAIN_TEXT.id;
     this.#languagePinned = false;
     this.error = '';

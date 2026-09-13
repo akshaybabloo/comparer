@@ -18,6 +18,7 @@ import type { Chunk, DocumentId, DocumentInfo, ServiceRequest, ServiceResponse }
 type Document = {
   id: DocumentId;
   name: string;
+  path: string | null;
   text: string;
   size: number;
   /** Offset of the start of each line, so a range can be sliced without a scan. */
@@ -37,10 +38,16 @@ function indexLines(text: string): number[] {
   return starts;
 }
 
-function store(id: DocumentId, name: string, text: string, size: number): DocumentInfo {
-  const document: Document = { id, name, text, size, lineStarts: indexLines(text) };
+function store(
+  id: DocumentId,
+  name: string,
+  path: string | null,
+  text: string,
+  size: number,
+): DocumentInfo {
+  const document: Document = { id, name, path, text, size, lineStarts: indexLines(text) };
   documents.set(id, document);
-  return { id, name, size, lineCount: document.lineStarts.length };
+  return { id, name, path, size, lineCount: document.lineStarts.length };
 }
 
 function get(docId: DocumentId): Document {
@@ -51,12 +58,14 @@ function get(docId: DocumentId): Document {
 
 async function open(path: string): Promise<DocumentInfo> {
   const text = await readFile(path, 'utf8');
-  return store(`doc${nextDocId++}`, basename(path), text, text.length);
+  return store(`doc${nextDocId++}`, basename(path), path, text, text.length);
 }
 
 function adopt(docId: DocumentId | null, text: string, name: string): DocumentInfo {
-  const id = docId && documents.has(docId) ? docId : `doc${nextDocId++}`;
-  return store(id, name, text, text.length);
+  const existing = docId ? documents.get(docId) : undefined;
+  const id = existing ? existing.id : `doc${nextDocId++}`;
+  // An edited file is still that file, so it keeps the path it was opened from.
+  return store(id, name, existing?.path ?? null, text, text.length);
 }
 
 /**

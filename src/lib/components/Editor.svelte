@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as InputGroup from '$lib/components/ui/input-group';
   import * as Select from '$lib/components/ui/select';
   import { Button } from '$lib/components/ui/button';
   import { darkEditorExtensions } from '$lib/editor-theme';
@@ -19,6 +20,7 @@
     rectangularSelection,
   } from '@codemirror/view';
   import FileTextIcon from '@lucide/svelte/icons/file-text';
+  import FolderIcon from '@lucide/svelte/icons/folder';
   import { untrack } from 'svelte';
   import XIcon from '@lucide/svelte/icons/x';
 
@@ -46,6 +48,15 @@
 
   let view: EditorView | null = $state(null);
   let dragDepth = $state(0);
+  let pathInput: HTMLInputElement | null = $state(null);
+
+  // A long path overflows the field; scroll it to the end so the filename and
+  // its nearest folders stay visible rather than the drive or home directory.
+  $effect(() => {
+    const path = pane.path;
+    if (!pathInput || !path) return;
+    pathInput.scrollLeft = pathInput.scrollWidth;
+  });
 
   const currentLanguageLabel = $derived(
     LANGUAGES.find((language) => language.id === pane.languageId)?.label ?? 'Plain text',
@@ -241,9 +252,16 @@
   }
 </script>
 
-<section class="bg-background flex min-h-0 min-w-0 flex-1 flex-col">
+<!-- Drag handlers sit on the whole pane so a file can be dropped on the path
+     field and header as well as the editor. -->
+<section
+  class="bg-background flex min-h-0 min-w-0 flex-1 flex-col"
+  ondragentercapture={onDragEnter}
+  ondragovercapture={onDragOver}
+  ondragleavecapture={onDragLeave}
+  ondropcapture={onDrop}
+>
   <header class="bg-card flex h-9 shrink-0 items-center gap-2 border-b px-2.5">
-    <FileTextIcon class="text-muted-foreground size-3.5 shrink-0" />
     <span class="truncate text-xs font-medium" title={pane.filename || placeholder}>
       {pane.filename || placeholder}
     </span>
@@ -309,16 +327,38 @@
     </div>
   </header>
 
-  <!-- Drag handlers sit on the wrapper so the drop target covers the whole
-       pane, including the gutter and the space below the last line. -->
-  <div
-    class="relative min-h-0 flex-1"
-    ondragentercapture={onDragEnter}
-    ondragovercapture={onDragOver}
-    ondragleavecapture={onDragLeave}
-    ondropcapture={onDrop}
-    role="presentation"
-  >
+  <div class="bg-card shrink-0 border-b px-2.5 py-1.5">
+    <InputGroup.Root class="h-7">
+      <InputGroup.Addon>
+        <FolderIcon class="size-3.5" />
+      </InputGroup.Addon>
+      <!-- Read-only: files are opened by dropping or picking, never by typing a
+           path, so the renderer has no way to name an arbitrary file. -->
+      <InputGroup.Input
+        bind:ref={pathInput}
+        readonly
+        value={pane.path ?? ''}
+        placeholder={pane.isEmpty ? 'No file' : 'Not saved to a file'}
+        title={pane.path ?? undefined}
+        aria-label="File location"
+        class="font-mono text-xs"
+        onfocus={(event) => event.currentTarget.select()}
+      />
+      <InputGroup.Addon align="inline-end">
+        <InputGroup.Button
+          size="icon-xs"
+          onclick={() => pane.pickFile()}
+          disabled={pane.loading}
+          aria-label="Open a file"
+          title="Open a file"
+        >
+          <FileTextIcon />
+        </InputGroup.Button>
+      </InputGroup.Addon>
+    </InputGroup.Root>
+  </div>
+
+  <div class="relative min-h-0 flex-1">
     <div class="h-full" {@attach codemirror}></div>
 
     {#if pane.isEmpty && !pane.loading}
@@ -334,7 +374,7 @@
 
     {#if pane.loading}
       <div class="bg-background/80 absolute inset-0 grid place-items-center backdrop-blur-sm">
-        <p class="text-muted-foreground text-xs">Reading {pane.filename}…</p>
+        <p class="text-muted-foreground text-xs">{pane.loadingLabel}</p>
       </div>
     {/if}
 

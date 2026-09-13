@@ -26,6 +26,8 @@ const bridge: ComparerBridge = {
     return ipcRenderer.invoke('comparer:adopt', null, text, file.name || 'dropped file');
   },
 
+  pickFile: (): Promise<DocumentInfo | null> => ipcRenderer.invoke('comparer:pick'),
+
   adoptText: (docId: DocumentId | null, text: string, name: string): Promise<DocumentInfo> =>
     ipcRenderer.invoke('comparer:adopt', docId, text, name),
 
