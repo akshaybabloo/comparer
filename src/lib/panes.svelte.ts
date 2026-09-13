@@ -1,4 +1,4 @@
-import { detectLanguage, languageById, PLAIN_TEXT, type Language } from './languages';
+import { detectLanguage, languageById, LANGUAGES, PLAIN_TEXT, type Language } from './languages';
 import type { DocumentId } from '../shared/protocol';
 
 /**
@@ -43,8 +43,13 @@ export class PaneState {
   /** Edited in the editor, so the service copy is stale. */
   dirty = $state(false);
 
-  /** Chosen in the picker, or inferred when a file is dropped. */
+  /** Inferred from the dropped file's name, unless overridden in the picker. */
   languageId = $state(PLAIN_TEXT.id);
+  /**
+   * Set by a manual pick, and scoped to the document on screen: a newly
+   * dropped file clears it, so picking a language once never stops later
+   * files from being detected.
+   */
   #languagePinned = $state(false);
 
   readonly language = $derived<Language>(languageById(this.languageId));
@@ -71,7 +76,8 @@ export class PaneState {
       // as the slices requested below.
       const info = await window.comparer.openDroppedFile(file);
       this.#reset(info);
-      if (!this.#languagePinned) this.languageId = detectLanguage(info.name).id;
+      this.#languagePinned = false;
+      this.languageId = detectLanguage(info.name).id;
 
       const chunk = await window.comparer.readChunk(info.id, 0, CHUNK_BYTES);
       this.text = chunk.text;
@@ -133,14 +139,45 @@ export class PaneState {
   }
 
   pinLanguage(id: string) {
+    // The picker can report values that are not languages, such as the empty
+    // string a cleared selection produces; those would silently fall back to
+    // plain text and pin it.
+    if (!LANGUAGES.some((language) => language.id === id)) return;
     this.languageId = id;
     this.#languagePinned = true;
+  }
+
+  /** Exchanges two panes wholesale, including their service documents. */
+  static swap(a: PaneState, b: PaneState) {
+    const snapshot = (pane: PaneState) => ({
+      text: pane.text,
+      filename: pane.filename,
+      languageId: pane.languageId,
+      languagePinned: pane.#languagePinned,
+      docId: pane.docId,
+      totalLines: pane.totalLines,
+      loadedBytes: pane.loadedBytes,
+      totalSize: pane.totalSize,
+      fullyLoaded: pane.fullyLoaded,
+      dirty: pane.dirty,
+    });
+    const restore = (pane: PaneState, { languagePinned, ...rest }: ReturnType<typeof snapshot>) => {
+      Object.assign(pane, rest);
+      pane.#languagePinned = languagePinned;
+    };
+
+    const left = snapshot(a);
+    const right = snapshot(b);
+    restore(a, right);
+    restore(b, left);
   }
 
   clear() {
     const previous = this.docId;
     this.text = '';
     this.filename = '';
+    this.languageId = PLAIN_TEXT.id;
+    this.#languagePinned = false;
     this.error = '';
     this.docId = null;
     this.totalLines = 0;

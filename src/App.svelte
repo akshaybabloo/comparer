@@ -52,27 +52,8 @@
     }
   }
 
-  /** Exchanges the two panes wholesale, including their service documents. */
   function swap() {
-    const snapshot = (pane: PaneState) => ({
-      text: pane.text,
-      filename: pane.filename,
-      languageId: pane.languageId,
-      docId: pane.docId,
-      totalLines: pane.totalLines,
-      loadedBytes: pane.loadedBytes,
-      totalSize: pane.totalSize,
-      fullyLoaded: pane.fullyLoaded,
-      dirty: pane.dirty,
-    });
-    const restore = (pane: PaneState, from: ReturnType<typeof snapshot>) => {
-      Object.assign(pane, from);
-    };
-
-    const a = snapshot(left);
-    const b = snapshot(right);
-    restore(left, b);
-    restore(right, a);
+    PaneState.swap(left, right);
   }
 
   /**
