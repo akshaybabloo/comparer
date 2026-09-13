@@ -1,5 +1,5 @@
 {
-  "workbench.startupEditor": "none",
-  "workbench.sideBar.location": "left",
-  "explorer.openEditors.visible": 0
+  "files.associations": {
+    "*.css": "tailwindcss"
+  }
 }

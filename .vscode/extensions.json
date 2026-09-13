@@ -1,7 +1,3 @@
 {
-  "recommendations": [
-    "rust-lang.rust-analyzer",
-    "vadimcn.vscode-lldb",
-    "Slint.slint"
-  ]
+  "recommendations": ["bradlc.vscode-tailwindcss"]
 }
