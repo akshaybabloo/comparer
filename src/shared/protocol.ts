@@ -3,7 +3,7 @@ import type { DiffResult } from '../lib/diff-types';
 /**
  * The contract between the renderer, the main process and the diff service.
  *
- * Deliberately narrow: the renderer can open a path the user dropped, read a
+ * Deliberately narrow: the renderer can open a file the user dropped or picked, read a
  * slice of a document it has opened, and diff two of them. There is no general
  * "read this file" call, because that would hand any code running in the
  * renderer the ability to read the whole filesystem.
@@ -15,6 +15,8 @@ export type DocumentId = string;
 export type DocumentInfo = {
   id: DocumentId;
   name: string;
+  /** Absolute path on disk, or null for text that never came from a file. */
+  path: string | null;
   /** Bytes on disk, or UTF-16 length for text typed into the app. */
   size: number;
   lineCount: number;
@@ -55,6 +57,8 @@ export type ServiceResponse =
 export type ComparerBridge = {
   /** Resolves a dropped File to its path and opens it in the service. */
   openDroppedFile: (file: File) => Promise<DocumentInfo>;
+  /** Shows the native file picker and opens the choice; null if cancelled. */
+  pickFile: () => Promise<DocumentInfo | null>;
   /** Replaces a document's contents with text the user typed or edited. */
   adoptText: (docId: DocumentId | null, text: string, name: string) => Promise<DocumentInfo>;
   readChunk: (docId: DocumentId, from: number, maxBytes: number) => Promise<Chunk>;

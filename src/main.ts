@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, session, type OpenDialogOptions } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import { serviceHost } from './service-host';
@@ -49,6 +49,18 @@ function registerIpc() {
   ipcMain.handle('comparer:open', (_event, path: string): Promise<DocumentInfo> => {
     if (typeof path !== 'string' || path.length === 0) throw new Error('A file path is required');
     return serviceHost.send<DocumentInfo>({ type: 'open', path });
+  });
+
+  // The dialog runs here rather than behind a renderer-supplied path, so the
+  // only files this can open are ones the user chose in it.
+  ipcMain.handle('comparer:pick', async (event): Promise<DocumentInfo | null> => {
+    const options: OpenDialogOptions = { title: 'Open file', properties: ['openFile'] };
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const { canceled, filePaths } = owner
+      ? await dialog.showOpenDialog(owner, options)
+      : await dialog.showOpenDialog(options);
+    if (canceled || filePaths.length === 0) return null;
+    return serviceHost.send<DocumentInfo>({ type: 'open', path: filePaths[0] });
   });
 
   ipcMain.handle(

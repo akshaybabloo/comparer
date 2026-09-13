@@ -138,6 +138,70 @@
     return Math.min(low, Math.max(0, rows.length - 1));
   }
 
+  /**
+   * Split view without wrapping.
+   *
+   * Letting each row grow to fit its text puts the right half wherever that
+   * row's left line happens to end, so the columns no longer line up. Instead
+   * both halves keep a fixed width and their text pans horizontally, together,
+   * under a scrollbar sized to the widest line — the gutters stay put.
+   */
+  const panned = $derived(mode === 'split' && !wrap);
+  /**
+   * Chromium stops laying out elements beyond roughly 33.5 million pixels. The
+   * scroll track is capped well below that and mapped onto the real width, so
+   * a multi-megabyte line can still be panned to its end.
+   */
+  const MAX_PAN_TRACK_PX = 16_000_000;
+  /** Matches the cell's `pr-4`. */
+  const CELL_PADDING_PX = 16;
+  /** Room after the longest line for the "no newline at end of file" note. */
+  const NOTE_COLUMNS = 30;
+  /** Columns rendered either side of the visible ones while panning. */
+  const PAN_OVERSCAN_COLUMNS = 40;
+
+  let scrollLeft = $state(0);
+
+  const halfTextPx = $derived(Math.max(0, (viewportWidth - SPLIT_GUTTER_PX * 2) / 2 - CELL_PADDING_PX));
+
+  const widestColumns = $derived.by(() => {
+    if (!panned) return 0;
+    let widest = 0;
+    for (const item of rows) {
+      if (item.kind === 'pair') widest = Math.max(widest, columnsOf(item.left), columnsOf(item.right));
+    }
+    return widest;
+  });
+
+  const panRange = $derived(
+    panned && charWidth > 0 ? Math.max(0, (widestColumns + NOTE_COLUMNS) * charWidth - halfTextPx) : 0,
+  );
+  const panTrack = $derived(Math.min(panRange, MAX_PAN_TRACK_PX));
+  const panX = $derived(panTrack > 0 ? Math.min(scrollLeft, panTrack) * (panRange / panTrack) : 0);
+
+  /**
+   * The columns of a row that fall inside its half at the current pan, and
+   * where they start. Horizontal windowing, so a 10 MB line puts a screenful
+   * of text in the DOM rather than all of it.
+   */
+  function panSliceFor(row: DiffRow): { left: number; parts: RenderedPart[]; trailing: boolean } {
+    // Column maths assumes one character per column, which tabs break.
+    if (hasTabs(row) || charWidth <= 0) {
+      return { left: 0, parts: renderSegments(row).parts, trailing: true };
+    }
+    const columns = columnsOf(row);
+    const firstColumn = Math.max(0, Math.floor(panX / charWidth) - PAN_OVERSCAN_COLUMNS);
+    const lastColumn = Math.min(
+      columns,
+      Math.ceil((panX + halfTextPx) / charWidth) + PAN_OVERSCAN_COLUMNS,
+    );
+    return {
+      left: firstColumn * charWidth,
+      parts: lastColumn > firstColumn ? sliceByColumns(row, firstColumn, lastColumn) : [],
+      trailing: lastColumn >= columns,
+    };
+  }
+
   const firstVisible = $derived(Math.max(0, indexAt(scrollTop) - OVERSCAN));
   const lastVisible = $derived(Math.min(rows.length, indexAt(scrollTop + viewportHeight) + 1 + OVERSCAN));
   const visible = $derived(rows.slice(firstVisible, lastVisible));
@@ -148,12 +212,18 @@
   $effect(() => {
     void result;
     void mode;
-    if (viewport) viewport.scrollTop = 0;
+    if (viewport) {
+      viewport.scrollTop = 0;
+      viewport.scrollLeft = 0;
+    }
     scrollTop = 0;
+    scrollLeft = 0;
   });
 
   function onScroll(event: Event) {
-    scrollTop = (event.currentTarget as HTMLElement).scrollTop;
+    const el = event.currentTarget as HTMLElement;
+    scrollTop = el.scrollTop;
+    scrollLeft = el.scrollLeft;
   }
 
   function gutterClass(row: DiffRow | null) {
@@ -210,6 +280,22 @@
 <!-- One text cell: the whole row, or just the wrapped lines on screen when the
      row is taller than the viewport. -->
 {#snippet cell(row: DiffRow | null, index: number, extra: string)}
+  {#if panned}
+    <!-- Fixed half width; the text moves inside it rather than widening the row. -->
+    <span class="{bodyClass(row)} min-w-0 flex-1 overflow-hidden whitespace-pre {extra}">
+      {#if row}
+        {@const pan = panSliceFor(row)}
+        <span class="block w-max" style:transform="translateX({pan.left - panX}px)">
+          {@render inlineParts(row, pan.parts, pan.trailing)}
+        </span>
+      {/if}
+    </span>
+  {:else}
+    {@render wholeCell(row, index, extra)}
+  {/if}
+{/snippet}
+
+{#snippet wholeCell(row: DiffRow | null, index: number, extra: string)}
   {@const slice = row ? sliceFor(index, row) : null}
   <span
     class="{bodyClass(row)} {textClass} {extra} {slice ? 'relative block overflow-hidden' : ''}"
@@ -245,9 +331,19 @@
       ? 'overflow-x-hidden'
       : ''}"
   >
-    <!-- Spacer carries the full scroll height; only `visible` is in the DOM. -->
-    <div style:height="{totalHeight}px" class="relative {wrap ? 'w-full' : 'w-max min-w-full'}">
-      <div style:transform="translateY({offsetY}px)" class="absolute inset-x-0 top-0">
+    <!-- Spacer carries the full scroll height; only `visible` is in the DOM.
+         When panning it also carries the horizontal track, while the rows stay
+         pinned to the viewport and move their text instead. -->
+    <div
+      style:height="{totalHeight}px"
+      style:width={panned ? `${viewportWidth + panTrack}px` : undefined}
+      class="relative {panned ? '' : wrap ? 'w-full' : 'w-max min-w-full'}"
+    >
+      <div
+        style:transform="translateY({offsetY}px)"
+        style:width={panned ? `${viewportWidth}px` : undefined}
+        class={panned ? 'sticky left-0' : 'absolute inset-x-0 top-0'}
+      >
         {#each visible as item, offset (item.key)}
           {@const index = firstVisible + offset}
           {#if item.kind === 'collapsed'}
