@@ -78,8 +78,8 @@ importers:
         specifier: ^6.0.2
         version: 6.0.2
       comparer-ts:
-        specifier: ^1.0.0
-        version: 1.0.0
+        specifier: link:../comparer-ts
+        version: link:../comparer-ts
       electron-squirrel-startup:
         specifier: ^1.0.1
         version: 1.0.1(supports-color@8.1.1)
@@ -1368,9 +1368,6 @@ packages:
   compare-version@0.1.2:
     resolution: {integrity: sha512-pJDh5/4wrEnXX/VWRZvruAGHkzKdr46z11OlTPN+VrATlWWhSKewNCJ1futCO5C7eJB3nPMFZA1LeYtcFboZ2A==}
     engines: {node: '>=0.10.0'}
-
-  comparer-ts@1.0.0:
-    resolution: {integrity: sha512-q0V0bpmQrE84Y40AV9Y5Pxi4xDkc5ZSeoR6rdJtKerUz7HUCvlUI8OXtjmshSa9KxIT3rfbC+ndMlkaVgFSgEA==}
 
   concat-map@0.0.1:
     resolution: {integrity: sha512-/Srv4dswyQNBfohGpz9o6Yb3Gz3SrUDqBH5rTuhGR7ahtlbYKnVxw2bCFMRljaA7EXHaXZ8wsHdodFvbkhKmqg==}
@@ -5309,8 +5306,6 @@ snapshots:
   commander@9.5.0: {}
 
   compare-version@0.1.2: {}
-
-  comparer-ts@1.0.0: {}
 
   concat-map@0.0.1: {}
 

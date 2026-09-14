@@ -243,7 +243,7 @@
   function marker(row: DiffRow | null) {
     if (!row) return '';
     if (row.tag === 'insert') return '+';
-    if (row.tag === 'delete') return '−';
+    if (row.tag === 'delete') return '-';
     return ' ';
   }
 

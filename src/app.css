@@ -142,6 +142,12 @@
 	--color-del-bg-strong: oklch(0.42 0.12 18);
 	--color-del-ink: oklch(0.85 0.12 18);
 	--color-del-gutter: oklch(0.52 0.1 18);
+
+	/* Folder comparison adds two states a line diff never has. Modified sits
+	   bluer than --color-brand so a changed file does not read as a selected or
+	   focused one; unknown is amber, a warning rather than a change. */
+	--color-mod-ink: oklch(0.8 0.11 265);
+	--color-unknown-ink: oklch(0.84 0.13 80);
 }
 
 @layer base {

@@ -1,5 +1,5 @@
 import { detectLanguage, languageById, LANGUAGES, PLAIN_TEXT, type Language } from './languages';
-import type { DocumentId, DocumentInfo } from '../shared/protocol';
+import type { DocumentId, DocumentInfo, OpenedInfo } from '../shared/protocol';
 
 /**
  * Above this size the grammar is dropped and the pane renders as plain text.
@@ -16,14 +16,17 @@ export const HIGHLIGHT_LIMIT_BYTES = 2 * 1024 * 1024;
 export const CHUNK_BYTES = 512 * 1024;
 
 /**
- * One side of the comparison.
+ * One side of the comparison: a document, or a folder.
  *
  * The authoritative text lives in the diff service, not here: this holds an
  * id, plus however much of the document has been streamed in for display. That
  * is what keeps a 10 MB file off the renderer's heap until someone looks at it,
- * and keeps it off the wire entirely when comparing.
+ * and keeps it off the wire entirely when comparing. A folder is held the same
+ * way, as an id the service can walk, with nothing of its contents loaded here.
  */
 export class PaneState {
+  /** A folder pane shows no editor, and compares only against another folder. */
+  kind = $state<'file' | 'folder'>('file');
   /** The slice currently loaded in the editor — a prefix of the document. */
   text = $state('');
   filename = $state('');
@@ -63,12 +66,16 @@ export class PaneState {
   readonly isEmpty = $derived(this.docId === null && this.text.length === 0);
   readonly pendingBytes = $derived(Math.max(0, this.totalSize - this.loadedBytes));
 
-  #reset(info: DocumentInfo) {
+  readonly isFolder = $derived(this.kind === 'folder');
+
+  #reset(info: OpenedInfo) {
+    this.kind = info.kind;
     this.docId = info.id;
     this.filename = info.name;
     this.path = info.path;
-    this.totalSize = info.size;
-    this.totalLines = info.lineCount;
+    // A folder's size and line count are not known without walking it.
+    this.totalSize = info.kind === 'file' ? info.size : 0;
+    this.totalLines = info.kind === 'file' ? info.lineCount : 0;
     this.dirty = false;
     this.error = '';
   }
@@ -86,7 +93,26 @@ export class PaneState {
     return this.#open(() => window.comparer.pickFile(), 'Opening file…', 'Could not open the file');
   }
 
-  async #open(request: () => Promise<DocumentInfo | null>, label: string, failure: string) {
+  /**
+   * Takes on a document the service already opened, without streaming any of
+   * it in. For a pane that is diffed but never shown in an editor, such as one
+   * side of a file opened from a folder comparison.
+   */
+  hold(info: DocumentInfo) {
+    const previous = this.docId;
+    this.#reset(info);
+    if (previous && previous !== info.id) void window.comparer.close(previous);
+    this.text = '';
+    this.loadedBytes = 0;
+    this.fullyLoaded = info.size === 0;
+  }
+
+  /** Opens a folder chosen in the native picker. Cancelling leaves the pane as it was. */
+  pickFolder() {
+    return this.#open(() => window.comparer.pickFolder(), 'Opening folder…', 'Could not open the folder');
+  }
+
+  async #open(request: () => Promise<OpenedInfo | null>, label: string, failure: string) {
     this.loading = true;
     this.loadingLabel = label;
     this.error = '';
@@ -99,6 +125,15 @@ export class PaneState {
       this.#reset(info);
       if (previous && previous !== info.id) void window.comparer.close(previous);
       this.#languagePinned = false;
+
+      if (info.kind === 'folder') {
+        this.languageId = PLAIN_TEXT.id;
+        this.text = '';
+        this.loadedBytes = 0;
+        this.fullyLoaded = true;
+        return;
+      }
+
       this.languageId = detectLanguage(info.name).id;
 
       const chunk = await window.comparer.readChunk(info.id, 0, CHUNK_BYTES);
@@ -173,6 +208,7 @@ export class PaneState {
   /** Exchanges two panes wholesale, including their service documents. */
   static swap(a: PaneState, b: PaneState) {
     const snapshot = (pane: PaneState) => ({
+      kind: pane.kind,
       text: pane.text,
       filename: pane.filename,
       path: pane.path,
@@ -198,6 +234,7 @@ export class PaneState {
 
   clear() {
     const previous = this.docId;
+    this.kind = 'file';
     this.text = '';
     this.filename = '';
     this.path = null;
