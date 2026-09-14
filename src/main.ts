@@ -1,9 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, session, type OpenDialogOptions } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, session, type OpenDialogOptions, type WebContents } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import { serviceHost } from './service-host';
-import type { Chunk, DocumentId, DocumentInfo } from './shared/protocol';
-import type { DiffResult } from './lib/diff-types';
+import type { Chunk, DocumentId, DocumentInfo, FolderEntryDocuments, OpenedInfo } from './shared/protocol';
+import type { DiffResult, FolderDiffResult } from './lib/diff-types';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -45,23 +45,37 @@ const CONTENT_SECURITY_POLICY = [
 const DIFF_CONTEXT_LINES = 3;
 const DIFF_MAX_ROWS = 200_000;
 
+/**
+ * The folder comparison each window has running, keyed by `webContents` id.
+ * Folder comparisons can run for seconds, so a newer one, Cancel, or closing
+ * the window stops the old one rather than leaving it hashing in the background.
+ */
+const folderDiffs = new Map<number, AbortController>();
+
+// The dialog runs here rather than behind a renderer-supplied path, so the
+// only paths this can open are ones the user chose in it.
+async function pick(sender: WebContents, options: OpenDialogOptions): Promise<OpenedInfo | null> {
+  const owner = BrowserWindow.fromWebContents(sender);
+  const { canceled, filePaths } = owner
+    ? await dialog.showOpenDialog(owner, options)
+    : await dialog.showOpenDialog(options);
+  if (canceled || filePaths.length === 0) return null;
+  return serviceHost.send<OpenedInfo>({ type: 'open', path: filePaths[0] });
+}
+
 function registerIpc() {
-  ipcMain.handle('comparer:open', (_event, path: string): Promise<DocumentInfo> => {
+  ipcMain.handle('comparer:open', (_event, path: string): Promise<OpenedInfo> => {
     if (typeof path !== 'string' || path.length === 0) throw new Error('A file path is required');
-    return serviceHost.send<DocumentInfo>({ type: 'open', path });
+    return serviceHost.send<OpenedInfo>({ type: 'open', path });
   });
 
-  // The dialog runs here rather than behind a renderer-supplied path, so the
-  // only files this can open are ones the user chose in it.
-  ipcMain.handle('comparer:pick', async (event): Promise<DocumentInfo | null> => {
-    const options: OpenDialogOptions = { title: 'Open file', properties: ['openFile'] };
-    const owner = BrowserWindow.fromWebContents(event.sender);
-    const { canceled, filePaths } = owner
-      ? await dialog.showOpenDialog(owner, options)
-      : await dialog.showOpenDialog(options);
-    if (canceled || filePaths.length === 0) return null;
-    return serviceHost.send<DocumentInfo>({ type: 'open', path: filePaths[0] });
-  });
+  ipcMain.handle('comparer:pick', (event) =>
+    pick(event.sender, { title: 'Open file', properties: ['openFile'] }),
+  );
+
+  ipcMain.handle('comparer:pick-folder', (event) =>
+    pick(event.sender, { title: 'Open folder', properties: ['openDirectory'] }),
+  );
 
   ipcMain.handle(
     'comparer:adopt',
@@ -85,6 +99,53 @@ function registerIpc() {
         context: DIFF_CONTEXT_LINES,
         maxRows: DIFF_MAX_ROWS,
       }),
+  );
+
+  ipcMain.handle(
+    'comparer:diff-folders',
+    async (event, left: DocumentId, right: DocumentId, token: number): Promise<FolderDiffResult> => {
+      if (typeof left !== 'string' || typeof right !== 'string') throw new Error('Two folders are required');
+
+      const { sender } = event;
+      folderDiffs.get(sender.id)?.abort();
+      const controller = new AbortController();
+      folderDiffs.set(sender.id, controller);
+      const abort = () => controller.abort();
+      sender.once('destroyed', abort);
+
+      try {
+        return await serviceHost.send<FolderDiffResult>(
+          { type: 'diffFolders', left, right },
+          {
+            signal: controller.signal,
+            // The token lets the preload drop progress still in flight from a
+            // comparison this one replaced.
+            onProgress: (progress) => {
+              if (!sender.isDestroyed()) sender.send('comparer:folder-progress', token, progress);
+            },
+          },
+        );
+      } finally {
+        sender.removeListener('destroyed', abort);
+        if (folderDiffs.get(sender.id) === controller) folderDiffs.delete(sender.id);
+      }
+    },
+  );
+
+  ipcMain.handle('comparer:cancel-folder-diff', (event): void => {
+    folderDiffs.get(event.sender.id)?.abort();
+  });
+
+  // The path comes from renderer code, so it only ever names something inside
+  // two folders the user already chose; the service enforces that.
+  ipcMain.handle(
+    'comparer:open-folder-entry',
+    (_event, left: DocumentId, right: DocumentId, path: string): Promise<FolderEntryDocuments> => {
+      if (typeof left !== 'string' || typeof right !== 'string' || typeof path !== 'string') {
+        throw new Error('Two folders and a path are required');
+      }
+      return serviceHost.send<FolderEntryDocuments>({ type: 'openFolderEntry', left, right, path });
+    },
   );
 
   ipcMain.handle('comparer:close', (_event, docId: DocumentId): Promise<void> => {

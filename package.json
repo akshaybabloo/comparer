@@ -82,7 +82,7 @@
     "@codemirror/view": "^6.43.11",
     "@lezer/highlight": "^1.2.3",
     "codemirror": "^6.0.2",
-    "comparer-ts": "^1.0.0",
+    "comparer-ts": "link:../comparer-ts",
     "electron-squirrel-startup": "^1.0.1",
     "svelte": "^5.57.0"
   }

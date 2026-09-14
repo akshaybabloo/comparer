@@ -21,12 +21,13 @@
   } from '@codemirror/view';
   import FileTextIcon from '@lucide/svelte/icons/file-text';
   import FolderIcon from '@lucide/svelte/icons/folder';
+  import FolderOpenIcon from '@lucide/svelte/icons/folder-open';
   import { untrack } from 'svelte';
   import XIcon from '@lucide/svelte/icons/x';
 
   type Props = {
     pane: PaneState;
-    /** Shown in the empty state, e.g. "Drop the original file". */
+    /** Shown in the empty state, e.g. "Drop the original file or folder here". */
     placeholder: string;
     /** Turns line wrapping on, shared with the other pane. */
     wrap: boolean;
@@ -266,7 +267,9 @@
       {pane.filename || placeholder}
     </span>
 
-    {#if !pane.isEmpty}
+    {#if pane.isFolder}
+      <span class="text-muted-foreground shrink-0 text-[11px]">Folder</span>
+    {:else if !pane.isEmpty}
       <span class="text-muted-foreground shrink-0 text-[11px] tabular-nums">
         {formatCount(pane.lineCount)} lines · {formatBytes(pane.byteLength)}
       </span>
@@ -296,21 +299,24 @@
         </span>
       {/if}
 
-      <Select.Root
-        type="single"
-        value={pane.languageId}
-        onValueChange={(value) => pane.pinLanguage(value)}
-        items={LANGUAGES.map((language) => ({ value: language.id, label: language.label }))}
-      >
-        <Select.Trigger size="sm" class="w-36 text-xs" aria-label="Syntax highlighting">
-          {currentLanguageLabel}
-        </Select.Trigger>
-        <Select.Content class="max-h-72">
-          {#each LANGUAGES as language (language.id)}
-            <Select.Item value={language.id} label={language.label}>{language.label}</Select.Item>
-          {/each}
-        </Select.Content>
-      </Select.Root>
+      <!-- A folder has no single language to highlight. -->
+      {#if !pane.isFolder}
+        <Select.Root
+          type="single"
+          value={pane.languageId}
+          onValueChange={(value) => pane.pinLanguage(value)}
+          items={LANGUAGES.map((language) => ({ value: language.id, label: language.label }))}
+        >
+          <Select.Trigger size="sm" class="w-36 text-xs" aria-label="Syntax highlighting">
+            {currentLanguageLabel}
+          </Select.Trigger>
+          <Select.Content class="max-h-72">
+            {#each LANGUAGES as language (language.id)}
+              <Select.Item value={language.id} label={language.label}>{language.label}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      {/if}
 
       {#if !pane.isEmpty}
         <Button
@@ -332,15 +338,15 @@
       <InputGroup.Addon>
         <FolderIcon class="size-3.5" />
       </InputGroup.Addon>
-      <!-- Read-only: files are opened by dropping or picking, never by typing a
-           path, so the renderer has no way to name an arbitrary file. -->
+      <!-- Read-only: files and folders are opened by dropping or picking, never by
+           typing a path, so the renderer has no way to name an arbitrary one. -->
       <InputGroup.Input
         bind:ref={pathInput}
         readonly
         value={pane.path ?? ''}
-        placeholder={pane.isEmpty ? 'No file' : 'Not saved to a file'}
+        placeholder={pane.isEmpty ? 'No file or folder' : 'Not saved to a file'}
         title={pane.path ?? undefined}
-        aria-label="File location"
+        aria-label={pane.isFolder ? 'Folder location' : 'File location'}
         class="font-mono text-xs"
         onfocus={(event) => event.currentTarget.select()}
       />
@@ -354,12 +360,35 @@
         >
           <FileTextIcon />
         </InputGroup.Button>
+        <InputGroup.Button
+          size="icon-xs"
+          onclick={() => pane.pickFolder()}
+          disabled={pane.loading}
+          aria-label="Open a folder"
+          title="Open a folder"
+        >
+          <FolderOpenIcon />
+        </InputGroup.Button>
       </InputGroup.Addon>
     </InputGroup.Root>
   </div>
 
   <div class="relative min-h-0 flex-1">
-    <div class="h-full" {@attach codemirror}></div>
+    {#if pane.isFolder}
+      <!-- Nothing inside the folder is read until it is compared, so there is
+           only the folder itself to show. CodeMirror is unmounted meanwhile and
+           remounts, from the pane's text, when a file replaces the folder. -->
+      <div class="grid h-full place-items-center overflow-auto p-6 text-center">
+        <div class="flex max-w-full flex-col items-center gap-2">
+          <FolderIcon class="text-brand size-10" strokeWidth={1.5} />
+          <p class="text-sm font-medium break-all">{pane.filename}</p>
+          <p class="text-muted-foreground max-w-md font-mono text-[11px] break-all">{pane.path}</p>
+          <p class="text-muted-foreground text-[11px] opacity-70">Compare it with another folder</p>
+        </div>
+      </div>
+    {:else}
+      <div class="h-full" {@attach codemirror}></div>
+    {/if}
 
     {#if pane.isEmpty && !pane.loading}
       <div

@@ -1,3 +1,5 @@
+import type { FolderDiff } from 'comparer-ts';
+
 export type DiffTag = 'equal' | 'delete' | 'insert';
 
 export type DiffSegment = {
@@ -41,6 +43,17 @@ export type DiffResult = {
   truncated: boolean;
   elapsedMs: number;
 };
+
+export type FolderDiffResult = FolderDiff & {
+  elapsedMs: number;
+};
+
+/** How far a folder comparison has got, reported while it runs. */
+export type FolderProgress =
+  /** Listing both folders; `entries` counts every entry found so far. */
+  | { phase: 'list'; entries: number }
+  /** Hashing files whose sizes match; `done` and `total` count files. */
+  | { phase: 'hash'; done: number; total: number; bytes: number };
 
 export type DiffRequest = {
   type: 'diff';
