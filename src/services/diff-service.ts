@@ -15,7 +15,7 @@ import type {
 	ServiceRequest,
 	ServiceResponse
 } from '../shared/protocol';
-import { chunksFromLines, type LineChunk } from '../lib/line-alignment';
+import { chunksFromLines, trimLines, type LineChunk } from '../lib/line-alignment';
 import { describe, listFolder } from './folder-listing';
 
 /**
@@ -291,8 +291,9 @@ function diff(left: DocumentId | null, right: DocumentId | null, context: number
 	};
 }
 
+/** How the lines of two documents line up, for keeping the editors level. See `trimLines`. */
 function lineChunks(left: DocumentId, right: DocumentId): LineChunk[] {
-	return chunksFromLines(generateDiff(get(left).text, get(right).text));
+	return chunksFromLines(generateDiff(trimLines(get(left).text), trimLines(get(right).text)));
 }
 
 async function* readWhole(file: string, signal: AbortSignal) {

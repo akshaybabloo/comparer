@@ -5,7 +5,7 @@
 	import ChangeStrip from '$lib/components/ChangeStrip.svelte';
 	import ImageViewport from '$lib/components/ImageViewport.svelte';
 	import ZoomControl from '$lib/components/ZoomControl.svelte';
-	import type { EditorSync } from '$lib/editor-sync.svelte';
+	import { lineAtScroll, type EditorSync } from '$lib/editor-sync.svelte';
 	import { darkEditorExtensions } from '$lib/editor-theme';
 	import { formatBytes, formatCount } from '$lib/format';
 	import { clampZoom, fitZoom } from '$lib/image-zoom';
@@ -72,6 +72,8 @@
 	 */
 	let layout = $state(0);
 	let scrolled = $state(0);
+	/** Moves on every change to the document, which is all that changes the minimap's lines. */
+	let docRevision = $state(0);
 	let layoutFrame = 0;
 	let scrollFrame = 0;
 
@@ -89,37 +91,32 @@
 		});
 	}
 
-	/**
-	 * The average height of the lines the editor holds so far. A large file streams in as
-	 * it is scrolled, so the rest of it is sized from this until its text arrives.
+	/*
+	 * The editor's minimap measures in lines rather than pixels. The editor only estimates
+	 * the height of a wrapped line until it draws it, and corrects the estimate as lines
+	 * scroll into view; measured in pixels, each correction re-scaled the whole minimap and
+	 * shifted which line every row of it showed, so it shimmered while scrolling. In lines,
+	 * a line always sits on the same row, and the scale follows the file's full line count,
+	 * known before a large file has finished streaming in.
 	 */
-	function averageLineHeight(instance: EditorView): number {
-		const doc = instance.state.doc;
-		return instance.lineBlockAt(doc.length).bottom / doc.lines || instance.defaultLineHeight;
-	}
 
-	const stripMarks = $derived.by(() => {
-		void layout;
-		return view ? sync.marks(side, view, averageLineHeight(view)) : [];
-	});
+	/** Minimap pixels a line may take at most, so a short file is drawn as lines rather than blocks. */
+	const STRIP_LINE_PX = 3;
 
 	/**
-	 * The line at a height in the editor, for the minimap. Only the first columns of it are
-	 * read: taking a whole megabyte-long line out of the document for every row of the
-	 * minimap would stall it.
+	 * The zero-based line at a position for the minimap, which shows only the text here:
+	 * differences are coloured once the files are compared, in the diff view. Only the first
+	 * columns of the line are read, since taking a whole megabyte-long line out of the
+	 * document for every row of the minimap would stall it. Lines still streaming in have
+	 * no text yet.
 	 */
-	function stripLineAt(y: number): StripLine | null {
-		if (!view) return null;
-		const padding = view.documentPadding.top;
-		const block = view.lineBlockAtHeight(y - padding);
-		if (y - padding > block.bottom) return null;
-		const line = view.state.doc.lineAt(block.from);
-		const text = view.state.doc.sliceString(line.from, Math.min(line.to, line.from + STRIP_COLUMNS));
-		return {
-			top: block.top + padding,
-			bottom: block.bottom + padding,
-			cells: [{ ...measureText(text), kind: sync.kindAt(side, line.number - 1) }]
-		};
+	function stripLineAt(position: number): StripLine | null {
+		const doc = view?.state.doc;
+		const index = Math.floor(position);
+		if (!doc || index < 0 || index >= doc.lines) return null;
+		const line = doc.line(index + 1);
+		const text = doc.sliceString(line.from, Math.min(line.to, line.from + STRIP_COLUMNS));
+		return { top: index, bottom: index + 1, cells: [{ ...measureText(text), kind: null }] };
 	}
 
 	/**
@@ -132,26 +129,24 @@
 		void scrolled;
 		if (!view) return { total: 0, start: 0, end: 0 };
 		const scroller = view.scrollDOM;
-		const unloaded = Math.max(0, pane.totalLines - view.state.doc.lines);
 		return {
-			total: scroller.scrollHeight + unloaded * averageLineHeight(view),
-			start: scroller.scrollTop,
-			end: scroller.scrollTop + scroller.clientHeight
+			total: Math.max(pane.totalLines, view.state.doc.lines),
+			start: lineAtScroll(view, scroller.scrollTop),
+			end: lineAtScroll(view, scroller.scrollTop + scroller.clientHeight)
 		};
 	});
 
 	let jumpToken = 0;
 
 	/**
-	 * Scrolls the minimap's chosen spot to the middle of the editor. A spot past what has
-	 * streamed in so far loads more of the file first, until there is something there.
+	 * Scrolls the minimap's chosen line to the middle of the editor. A line past what has
+	 * streamed in so far loads more of the file first, until it is there.
 	 */
-	async function jump(position: number) {
+	async function jump(line: number) {
 		const token = ++jumpToken;
 		const instance = view;
 		if (!instance) return;
-		const scroller = instance.scrollDOM;
-		while (!pane.fullyLoaded && !pane.error && scroller.scrollHeight < position + scroller.clientHeight / 2) {
+		while (!pane.fullyLoaded && !pane.error && instance.state.doc.lines <= line) {
 			// A newer jump, such as the next step of a drag, takes over.
 			if (token !== jumpToken) return;
 			if (pane.loading) await new Promise(requestAnimationFrame);
@@ -160,7 +155,13 @@
 				await tick();
 			}
 		}
-		if (token === jumpToken) scroller.scrollTop = position - scroller.clientHeight / 2;
+		if (token !== jumpToken) return;
+		const doc = instance.state.doc;
+		const index = Math.min(doc.lines - 1, Math.max(0, Math.floor(line)));
+		const block = instance.lineBlockAt(doc.line(index + 1).from);
+		const scroller = instance.scrollDOM;
+		const y = instance.documentPadding.top + block.top + (line - index) * block.height;
+		scroller.scrollTop = y - scroller.clientHeight / 2;
 	}
 
 	/** The scale an image preview is drawn at: the pane's chosen zoom, or whatever fits. */
@@ -244,6 +245,9 @@
 					EditorView.updateListener.of((update) => {
 						const ours = update.transactions.some((tr) => tr.annotation(Programmatic));
 						if (update.docChanged && !ours) pane.setTextFromEditor(update.state.doc.toString());
+						// Untracked: this listener runs inside whichever effect dispatched the change, and
+						// reading the counter there would have that effect re-run itself.
+						if (update.docChanged) untrack(() => docRevision++);
 						if (update.docChanged || update.heightChanged || update.geometryChanged) layoutChanged();
 					}),
 					EditorView.domEventHandlers({
@@ -273,9 +277,13 @@
 	// dropped file, or Clear). Typing already left the document correct, and the
 	// equality check is what stops this from fighting the cursor.
 	$effect(() => {
-		const text = pane.text;
 		const instance = view;
 		if (!instance) return;
+		// CodeMirror keeps every line break as `\n`, so text with Windows or old Mac line
+		// endings is compared as it will be stored. Compared raw, a `\r\n` file never
+		// matched, and every chunk streamed in replaced the whole document instead of
+		// being appended to it.
+		const text = pane.text.includes('\r') ? pane.text.replace(/\r\n?/g, '\n') : pane.text;
 
 		const current = instance.state.doc.toString();
 		if (current === text) return;
@@ -559,13 +567,14 @@
 				<div class="h-full min-w-0 flex-1" {@attach codemirror}></div>
 				{#if !pane.isEmpty}
 					<ChangeStrip
-						marks={stripMarks}
 						total={stripView.total}
 						lineAt={stripLineAt}
-						revision={layout}
+						maxScale={STRIP_LINE_PX}
+						revision={docRevision}
 						viewStart={stripView.start}
 						viewEnd={stripView.end}
 						onjump={(position) => void jump(position)}
+						onscrollby={(delta) => view?.scrollDOM.scrollBy({ top: delta })}
 					/>
 				{/if}
 			</div>

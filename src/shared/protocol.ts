@@ -131,9 +131,9 @@ export type ComparerBridge = {
 	openFolderEntry: (left: DocumentId, right: DocumentId, path: string) => Promise<FolderEntryDocuments>;
 	/** The bytes of an opened image, for previewing it. */
 	/**
-	 * Which line ranges differ between two documents, for keeping the editors level as
-	 * they scroll and marking their minimaps. Lighter than `diff`: no word-level pass, and
-	 * only the changed stretches come back.
+	 * How the lines of two documents line up, for keeping the editors level as they
+	 * scroll. Lighter than `diff`: no word-level pass, and only the changed stretches
+	 * come back.
 	 */
 	lineChunks: (left: DocumentId, right: DocumentId) => Promise<LineChunk[]>;
 	readImage: (docId: DocumentId) => Promise<Uint8Array>;

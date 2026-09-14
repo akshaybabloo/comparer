@@ -227,7 +227,7 @@
 	 * the entry does not exist.
 	 */
 	function sideClass(node: TreeNode, kind: EntryKind | null) {
-		if (!kind) return 'bg-muted/25';
+		if (!kind) return 'bg-muted/25 empty-stripes';
 		if (node.status === 'added') return 'bg-add-bg/70';
 		if (node.status === 'deleted') return 'bg-del-bg/70';
 		if (node.status === 'modified') return 'bg-mod-ink/10';
@@ -423,6 +423,7 @@
 			onjump={(position) => {
 				if (viewport) viewport.scrollTop = position - viewportHeight / 2;
 			}}
+			onscrollby={(delta) => viewport?.scrollBy({ top: delta })}
 		/>
 	</div>
 {/if}

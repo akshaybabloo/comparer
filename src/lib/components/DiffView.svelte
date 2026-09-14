@@ -262,14 +262,14 @@
 	}
 
 	function gutterClass(row: DiffRow | null) {
-		if (!row) return 'bg-background';
+		if (!row) return 'bg-background empty-stripes';
 		if (row.tag === 'insert') return 'bg-add-bg text-add-gutter';
 		if (row.tag === 'delete') return 'bg-del-bg text-del-gutter';
 		return 'bg-background text-muted-foreground';
 	}
 
 	function bodyClass(row: DiffRow | null) {
-		if (!row) return 'bg-muted/25';
+		if (!row) return 'bg-muted/25 empty-stripes';
 		if (row.tag === 'insert') return 'bg-add-bg text-add-ink';
 		if (row.tag === 'delete') return 'bg-del-bg text-del-ink';
 		return 'text-foreground';
@@ -404,7 +404,8 @@
 								{@render cell(item.row, index, 'pr-4')}
 							</div>
 						{:else}
-							<div class="flex">
+							<!-- Rows are 20px and the stripe tile 8px, so each row shifts its stripes to continue the row above's. -->
+							<div class="flex" style:--stripe-y="{-(offsets[index] % 8)}px">
 								<!-- Left / original -->
 								<span
 									class="{gutterClass(item.left)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none"
@@ -435,6 +436,7 @@
 			onjump={(position) => {
 				if (viewport) viewport.scrollTop = position - viewportHeight / 2;
 			}}
+			onscrollby={(delta) => viewport?.scrollBy({ top: delta })}
 		/>
 	</div>
 {/if}

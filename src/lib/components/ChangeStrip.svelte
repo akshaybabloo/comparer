@@ -3,35 +3,64 @@
 	import { STRIP_COLUMNS, type StripLine } from '$lib/minimap';
 
 	type Props = {
-		/** The full height of the content the minimap stands for, in pixels. */
+		/**
+		 * The full length of the content the minimap stands for, in its caller's units:
+		 * pixels of scroll height, or lines.
+		 */
 		total: number;
-		/** The part of the content currently on screen, in the same pixels. */
+		/** The part of the content currently on screen, in the same units. */
 		viewStart: number;
 		viewEnd: number;
-		/** The line of content at a height, in the same pixels, or null where there is none. */
-		lineAt: (y: number) => StripLine | null;
+		/** The line of content at a position, in the same units, or null where there is none. */
+		lineAt: (position: number) => StripLine | null;
+		/**
+		 * The most minimap pixels one unit may be drawn as, so a short text reads as lines
+		 * at the top of the minimap rather than blocks stretched down its whole height. The
+		 * default suits pixel units: a 20px line is drawn at most 3px tall.
+		 */
+		maxScale?: number;
 		/**
 		 * Changed stretches, drawn as a bar down the minimap's edge, so a change still shows
-		 * where its lines are blank or where the other side's lines were removed.
+		 * where its lines are blank or where the other side's lines were removed. None for a
+		 * minimap that only shows text.
 		 */
-		marks: readonly ChangeMark[];
+		marks?: readonly ChangeMark[];
 		/**
 		 * Moves whenever what `lineAt` returns may have changed without anything reactive
 		 * changing with it, such as an editor's line heights.
 		 */
 		revision?: number;
-		/** Asks to bring `position`, in the same pixels, into the middle of the view. */
+		/** Asks to bring `position`, in the same units, into the middle of the view. */
 		onjump: (position: number) => void;
+		/** Asks to scroll the view by `delta` pixels, for the mouse wheel over the minimap. */
+		onscrollby: (delta: number) => void;
 	};
 
-	let { total, viewStart, viewEnd, lineAt, marks, revision = 0, onjump }: Props = $props();
+	let {
+		total,
+		viewStart,
+		viewEnd,
+		lineAt,
+		maxScale = 0.15,
+		marks = [],
+		revision = 0,
+		onjump,
+		onscrollby
+	}: Props = $props();
 
-	/**
-	 * The most a line may be scaled to: a 20px line is drawn at most 3px tall, so a short
-	 * file reads as lines of text at the top of the minimap rather than blocks stretched
-	 * down its whole height. Past that the minimap compresses to fit.
-	 */
-	const MAX_SCALE = 0.15;
+	/** Pixels per wheel step reported in lines, and in pages, rather than pixels. */
+	const WHEEL_LINE_PX = 20;
+
+	function wheel(event: WheelEvent) {
+		const unit =
+			event.deltaMode === WheelEvent.DOM_DELTA_LINE
+				? WHEEL_LINE_PX
+				: event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+					? height
+					: 1;
+		onscrollby(event.deltaY * unit);
+	}
+
 	/** A change bar never thinner than this, so a single changed line in a long file still shows. */
 	const MIN_MARK_PX = 3;
 	/** The on-screen box never shrinks below this, so it stays visible and easy to grab. */
@@ -51,7 +80,7 @@
 	let width = $state(0);
 	let height = $state(0);
 
-	const scale = $derived(total > 0 && height > 0 ? Math.min(height / total, MAX_SCALE) : 0);
+	const scale = $derived(total > 0 && height > 0 ? Math.min(height / total, maxScale) : 0);
 	const boxTop = $derived(viewStart * scale);
 	const boxHeight = $derived(Math.max(MIN_BOX_PX, (viewEnd - viewStart) * scale));
 
@@ -127,6 +156,7 @@
 	onpointermove={(event) => {
 		if (event.currentTarget.hasPointerCapture(event.pointerId)) jumpTo(event);
 	}}
+	onwheel={wheel}
 >
 	<canvas bind:this={canvas} class="pointer-events-none absolute inset-0 size-full"></canvas>
 	<div

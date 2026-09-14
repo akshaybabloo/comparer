@@ -1,6 +1,6 @@
 /**
- * How the lines of two texts correspond, and the arithmetic built on it: keeping two
- * editors level as they scroll, and placing change marks on their minimaps.
+ * How the lines of two texts correspond, and the arithmetic that keeps two editors level
+ * as they scroll. The change marks shared by the minimaps are typed here too.
  *
  * Only the changed stretches are listed. Everything between them is equal on both
  * sides, so a line there maps across by a constant offset.
@@ -12,6 +12,21 @@ export type LineChunk = { leftStart: number; leftEnd: number; rightStart: number
 export type Side = 'left' | 'right';
 
 export type ChangeKind = 'add' | 'del' | 'mod' | 'unknown';
+
+/**
+ * The text with whitespace trimmed from both ends of every line, keeping the line count,
+ * so a diff of two such texts still numbers its lines like the originals.
+ *
+ * Aligning the editors ignores that whitespace: a re-indented file otherwise has every
+ * line changed, and the few that happen to match — a line two levels deep on one side
+ * against one level deep on the other — pull the two sides wildly out of step.
+ */
+export function trimLines(text: string): string {
+	return text
+		.split('\n')
+		.map((line) => line.trim())
+		.join('\n');
+}
 
 /** A run of something changed, in whatever unit its caller measures in (lines, rows, pixels). */
 export type ChangeMark = { start: number; end: number; kind: ChangeKind };
@@ -75,38 +90,4 @@ export function mapLine(chunks: readonly LineChunk[], line: number, from: Side):
 	const [toStart, toEnd] = range(chunk, to);
 	if (line >= fromEnd) return toEnd + (line - fromEnd);
 	return toStart + ((line - fromStart) / (fromEnd - fromStart)) * (toEnd - toStart);
-}
-
-/** The kind of change a line on one side is part of, or null for an unchanged line. */
-export function kindAtLine(chunks: readonly LineChunk[], side: Side, line: number): ChangeKind | null {
-	let low = 0;
-	let high = chunks.length;
-	while (low < high) {
-		const mid = (low + high) >> 1;
-		if (range(chunks[mid], side)[1] <= line) low = mid + 1;
-		else high = mid;
-	}
-	const chunk = chunks[low];
-	if (!chunk) return null;
-	const [start, end] = range(chunk, side);
-	if (line < start || line >= end) return null;
-	const [otherStart, otherEnd] = range(chunk, other(side));
-	return otherEnd > otherStart ? 'mod' : side === 'left' ? 'del' : 'add';
-}
-
-/**
- * Where one side changed, in its own lines. A chunk with lines on both sides is a
- * modification; one with lines only here was deleted (left) or added (right). A chunk
- * with no lines on this side still gets a zero-length mark, so the minimap shows where
- * the other side's lines were inserted or removed.
- */
-export function lineMarks(chunks: readonly LineChunk[], side: Side): ChangeMark[] {
-	return chunks.map((chunk) => {
-		const [start, end] = range(chunk, side);
-		const [otherStart, otherEnd] = range(chunk, other(side));
-		const here = end > start;
-		const there = otherEnd > otherStart;
-		const kind: ChangeKind = here && there ? 'mod' : (side === 'left') === here ? 'del' : 'add';
-		return { start, end, kind };
-	});
 }
