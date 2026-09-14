@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ChangeStrip from '$lib/components/ChangeStrip.svelte';
 	import type { FolderDiffResult } from '$lib/diff-types';
 	import {
 		canOpen,
@@ -12,6 +13,8 @@
 		type TreeRow
 	} from '$lib/folder-tree-model';
 	import { formatCount } from '$lib/format';
+	import type { StripLine } from '$lib/minimap';
+	import type { ChangeKind, ChangeMark } from '$lib/line-alignment';
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 	import FileIcon from '@lucide/svelte/icons/file';
 	import FileQuestionMarkIcon from '@lucide/svelte/icons/file-question-mark';
@@ -70,6 +73,47 @@
 		Math.min(rows.length, Math.ceil((scrollTop + viewportHeight - HEADER_HEIGHT) / ROW_HEIGHT) + OVERSCAN)
 	);
 	const visible = $derived(rows.slice(firstVisible, lastVisible));
+
+	/**
+	 * The row at a height in the tree, for the minimap: its name, indented by depth, in
+	 * one cell for the merged tree or on whichever halves have the entry side by side.
+	 */
+	function stripLineAt(y: number): StripLine | null {
+		const index = Math.floor((y - HEADER_HEIGHT) / ROW_HEIGHT);
+		const row = rows[index];
+		if (!row) return null;
+		const top = HEADER_HEIGHT + index * ROW_HEIGHT;
+		const kind = CHANGE[row.node.status] ?? null;
+		const cell = (present: boolean) => ({
+			indent: row.depth * 2,
+			length: present ? row.depth * 2 + 2 + row.node.name.length : 0,
+			kind
+		});
+		const cells =
+			mode === 'split' ? [cell(row.node.left_kind !== null), cell(row.node.right_kind !== null)] : [cell(true)];
+		return { top, bottom: top + ROW_HEIGHT, cells };
+	}
+
+	const CHANGE: Partial<Record<ChangeStatus, ChangeKind>> = {
+		added: 'add',
+		deleted: 'del',
+		modified: 'mod',
+		unknown: 'unknown'
+	};
+
+	/** Changed rows for the minimap, merged into runs, in pixels down the scrollable area. */
+	const marks = $derived.by(() => {
+		const out: ChangeMark[] = [];
+		for (let i = 0; i < rows.length; i++) {
+			const kind = CHANGE[rows[i].node.status];
+			if (!kind) continue;
+			const start = HEADER_HEIGHT + i * ROW_HEIGHT;
+			const last = out.at(-1);
+			if (last && last.kind === kind && last.end === start) last.end = start + ROW_HEIGHT;
+			else out.push({ start, end: start + ROW_HEIGHT, kind });
+		}
+		return out;
+	});
 
 	// A new result is a new tree: start at the top rather than wherever the last
 	// one was scrolled to.
@@ -183,7 +227,7 @@
 	 * the entry does not exist.
 	 */
 	function sideClass(node: TreeNode, kind: EntryKind | null) {
-		if (!kind) return 'bg-muted/25';
+		if (!kind) return 'bg-muted/25 empty-stripes';
 		if (node.status === 'added') return 'bg-add-bg/70';
 		if (node.status === 'deleted') return 'bg-del-bg/70';
 		if (node.status === 'modified') return 'bg-mod-ink/10';
@@ -286,87 +330,100 @@
 		</div>
 	</div>
 {:else}
-	<div
-		bind:this={viewport}
-		bind:clientHeight={viewportHeight}
-		onscroll={(event) => (scrollTop = event.currentTarget.scrollTop)}
-		onkeydown={onKeydown}
-		role="tree"
-		aria-label="Folder comparison"
-		aria-activedescendant={selectedIndex >= firstVisible && selectedIndex < lastVisible
-			? `tree-row-${selectedIndex}`
-			: undefined}
-		tabindex="0"
-		class="h-full overflow-x-hidden overflow-y-auto text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
-	>
-		{@render columns()}
+	<div class="flex h-full">
+		<div
+			bind:this={viewport}
+			bind:clientHeight={viewportHeight}
+			onscroll={(event) => (scrollTop = event.currentTarget.scrollTop)}
+			onkeydown={onKeydown}
+			role="tree"
+			aria-label="Folder comparison"
+			aria-activedescendant={selectedIndex >= firstVisible && selectedIndex < lastVisible
+				? `tree-row-${selectedIndex}`
+				: undefined}
+			tabindex="0"
+			class="h-full min-w-0 flex-1 overflow-x-hidden overflow-y-auto text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
+		>
+			{@render columns()}
 
-		<!-- Spacer carries the full scroll height; only `visible` is in the DOM. -->
-		<div class="relative w-full" style:height="{rows.length * ROW_HEIGHT}px">
-			<div class="absolute inset-x-0 top-0" style:transform="translateY({firstVisible * ROW_HEIGHT}px)">
-				{#each visible as row, offset (row.node.path)}
-					{@const index = firstVisible + offset}
-					{@const node = row.node}
-					{@const selected = node.path === selectedPath}
-					{@const indent = `${8 + row.depth * INDENT_PX}px`}
-					<!-- Keys are handled once, on the tree, rather than on every row. -->
-					<!-- svelte-ignore a11y_click_events_have_key_events -->
-					<div
-						id="tree-row-{index}"
-						role="treeitem"
-						tabindex="-1"
-						aria-level={row.depth + 1}
-						aria-expanded={row.expandable ? row.expanded : undefined}
-						aria-selected={selected}
-						title={describeNode(node)}
-						class="flex items-stretch whitespace-nowrap select-none {selected
-							? 'bg-accent ring-1 ring-brand/60 ring-inset'
-							: 'hover:bg-muted/50'} {canOpen(node) ? 'cursor-pointer' : ''}"
-						style:height="{ROW_HEIGHT}px"
-						onclick={() => (selectedPath = node.path)}
-						ondblclick={() => {
-							if (row.expandable) toggle(node);
-							else if (canOpen(node)) onopen?.(node);
-						}}
-					>
-						{#if mode === 'split'}
-							<!-- Left / original -->
-							<div
-								class="flex min-w-0 flex-1 items-center gap-1.5 pr-2 {sideClass(node, node.left_kind)}"
-								style:padding-left={indent}
-							>
-								{#if node.left_kind}
-									{@render entry(row, node.left_kind)}
-									{#if hasErrorOn(node, 'left')}{@render warning()}{/if}
-								{/if}
-							</div>
+			<!-- Spacer carries the full scroll height; only `visible` is in the DOM. -->
+			<div class="relative w-full" style:height="{rows.length * ROW_HEIGHT}px">
+				<div class="absolute inset-x-0 top-0" style:transform="translateY({firstVisible * ROW_HEIGHT}px)">
+					{#each visible as row, offset (row.node.path)}
+						{@const index = firstVisible + offset}
+						{@const node = row.node}
+						{@const selected = node.path === selectedPath}
+						{@const indent = `${8 + row.depth * INDENT_PX}px`}
+						<!-- Keys are handled once, on the tree, rather than on every row. -->
+						<!-- svelte-ignore a11y_click_events_have_key_events -->
+						<div
+							id="tree-row-{index}"
+							role="treeitem"
+							tabindex="-1"
+							aria-level={row.depth + 1}
+							aria-expanded={row.expandable ? row.expanded : undefined}
+							aria-selected={selected}
+							title={describeNode(node)}
+							class="flex items-stretch whitespace-nowrap select-none {selected
+								? 'bg-accent ring-1 ring-brand/60 ring-inset'
+								: 'hover:bg-muted/50'} {canOpen(node) ? 'cursor-pointer' : ''}"
+							style:height="{ROW_HEIGHT}px"
+							onclick={() => (selectedPath = node.path)}
+							ondblclick={() => {
+								if (row.expandable) toggle(node);
+								else if (canOpen(node)) onopen?.(node);
+							}}
+						>
+							{#if mode === 'split'}
+								<!-- Left / original -->
+								<div
+									class="flex min-w-0 flex-1 items-center gap-1.5 pr-2 {sideClass(node, node.left_kind)}"
+									style:padding-left={indent}
+								>
+									{#if node.left_kind}
+										{@render entry(row, node.left_kind)}
+										{#if hasErrorOn(node, 'left')}{@render warning()}{/if}
+									{/if}
+								</div>
 
-							{@render letter(node, 'grid w-6 place-items-center border-x')}
+								{@render letter(node, 'grid w-6 place-items-center border-x')}
 
-							<!-- Right / changed -->
-							<div
-								class="flex min-w-0 flex-1 items-center gap-1.5 pr-2 {sideClass(node, node.right_kind)}"
-								style:padding-left={indent}
-							>
-								{#if node.right_kind}
-									{@render entry(row, node.right_kind)}
-									{#if hasErrorOn(node, 'right')}{@render warning()}{/if}
-								{/if}
-							</div>
-						{:else}
-							{@const change = kindChange(node)}
-							<div class="flex min-w-0 flex-1 items-center gap-1.5 pr-3" style:padding-left={indent}>
-								{@render entry(row, displayKind(node))}
-								{#if change}
-									<span class="shrink-0 text-[11px] text-muted-foreground">{change}</span>
-								{/if}
-								{#if node.error}{@render warning()}{/if}
-								{@render letter(node, 'ml-auto w-3')}
-							</div>
-						{/if}
-					</div>
-				{/each}
+								<!-- Right / changed -->
+								<div
+									class="flex min-w-0 flex-1 items-center gap-1.5 pr-2 {sideClass(node, node.right_kind)}"
+									style:padding-left={indent}
+								>
+									{#if node.right_kind}
+										{@render entry(row, node.right_kind)}
+										{#if hasErrorOn(node, 'right')}{@render warning()}{/if}
+									{/if}
+								</div>
+							{:else}
+								{@const change = kindChange(node)}
+								<div class="flex min-w-0 flex-1 items-center gap-1.5 pr-3" style:padding-left={indent}>
+									{@render entry(row, displayKind(node))}
+									{#if change}
+										<span class="shrink-0 text-[11px] text-muted-foreground">{change}</span>
+									{/if}
+									{#if node.error}{@render warning()}{/if}
+									{@render letter(node, 'ml-auto w-3')}
+								</div>
+							{/if}
+						</div>
+					{/each}
+				</div>
 			</div>
 		</div>
+		<ChangeStrip
+			{marks}
+			total={HEADER_HEIGHT + rows.length * ROW_HEIGHT}
+			lineAt={stripLineAt}
+			viewStart={scrollTop}
+			viewEnd={scrollTop + viewportHeight}
+			onjump={(position) => {
+				if (viewport) viewport.scrollTop = position - viewportHeight / 2;
+			}}
+			onscrollby={(delta) => viewport?.scrollBy({ top: delta })}
+		/>
 	</div>
 {/if}

@@ -2,12 +2,16 @@
 	import * as InputGroup from '$lib/components/ui/input-group';
 	import * as Select from '$lib/components/ui/select';
 	import { Button } from '$lib/components/ui/button';
+	import ChangeStrip from '$lib/components/ChangeStrip.svelte';
 	import ImageViewport from '$lib/components/ImageViewport.svelte';
 	import ZoomControl from '$lib/components/ZoomControl.svelte';
+	import { lineAtScroll, type EditorSync } from '$lib/editor-sync.svelte';
 	import { darkEditorExtensions } from '$lib/editor-theme';
 	import { formatBytes, formatCount } from '$lib/format';
 	import { clampZoom, fitZoom } from '$lib/image-zoom';
 	import { LANGUAGES } from '$lib/languages';
+	import type { Side } from '$lib/line-alignment';
+	import { measureText, STRIP_COLUMNS, type StripLine } from '$lib/minimap';
 	import { HIGHLIGHT_LIMIT_BYTES, type PaneState } from '$lib/panes.svelte';
 	import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 	import { bracketMatching, foldGutter, indentOnInput, indentUnit } from '@codemirror/language';
@@ -26,7 +30,7 @@
 	import FolderIcon from '@lucide/svelte/icons/folder';
 	import FolderOpenIcon from '@lucide/svelte/icons/folder-open';
 	import ImageIcon from '@lucide/svelte/icons/image';
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import XIcon from '@lucide/svelte/icons/x';
 
 	type Props = {
@@ -35,9 +39,13 @@
 		placeholder: string;
 		/** Turns line wrapping on, shared with the other pane. */
 		wrap: boolean;
+		/** Which side of the comparison this is. */
+		side: Side;
+		/** Keeps this editor level with the other one, and supplies its minimap's change marks. */
+		sync: EditorSync;
 	};
 
-	let { pane, placeholder, wrap }: Props = $props();
+	let { pane, placeholder, wrap, side, sync }: Props = $props();
 
 	/**
 	 * Marks transactions this component dispatched itself — streaming a chunk in,
@@ -56,6 +64,105 @@
 	let pathInput: HTMLInputElement | null = $state(null);
 	let bodyWidth = $state(0);
 	let bodyHeight = $state(0);
+
+	/*
+	 * The editor's layout lives in CodeMirror rather than in Svelte state, so the minimap
+	 * reads it again whenever these counters move: `layout` when the document or its line
+	 * heights change, `scrolled` when the view scrolls. Each is bumped at most once a frame.
+	 */
+	let layout = $state(0);
+	let scrolled = $state(0);
+	/** Moves on every change to the document, which is all that changes the minimap's lines. */
+	let docRevision = $state(0);
+	let layoutFrame = 0;
+	let scrollFrame = 0;
+
+	function layoutChanged() {
+		layoutFrame ||= requestAnimationFrame(() => {
+			layoutFrame = 0;
+			layout++;
+		});
+	}
+
+	function viewScrolled() {
+		scrollFrame ||= requestAnimationFrame(() => {
+			scrollFrame = 0;
+			scrolled++;
+		});
+	}
+
+	/*
+	 * The editor's minimap measures in lines rather than pixels. The editor only estimates
+	 * the height of a wrapped line until it draws it, and corrects the estimate as lines
+	 * scroll into view; measured in pixels, each correction re-scaled the whole minimap and
+	 * shifted which line every row of it showed, so it shimmered while scrolling. In lines,
+	 * a line always sits on the same row, and the scale follows the file's full line count,
+	 * known before a large file has finished streaming in.
+	 */
+
+	/** Minimap pixels a line may take at most, so a short file is drawn as lines rather than blocks. */
+	const STRIP_LINE_PX = 3;
+
+	/**
+	 * The zero-based line at a position for the minimap, which shows only the text here:
+	 * differences are coloured once the files are compared, in the diff view. Only the first
+	 * columns of the line are read, since taking a whole megabyte-long line out of the
+	 * document for every row of the minimap would stall it. Lines still streaming in have
+	 * no text yet.
+	 */
+	function stripLineAt(position: number): StripLine | null {
+		const doc = view?.state.doc;
+		const index = Math.floor(position);
+		if (!doc || index < 0 || index >= doc.lines) return null;
+		const line = doc.line(index + 1);
+		const text = doc.sliceString(line.from, Math.min(line.to, line.from + STRIP_COLUMNS));
+		return { top: index, bottom: index + 1, cells: [{ ...measureText(text), kind: null }] };
+	}
+
+	/**
+	 * What the minimap shows is on screen, against the height of the whole file. While a file
+	 * is still streaming in, lines not yet loaded count at the average height of those that
+	 * are — otherwise every chunk arriving would squeeze the minimap's lines closer together.
+	 */
+	const stripView = $derived.by(() => {
+		void layout;
+		void scrolled;
+		if (!view) return { total: 0, start: 0, end: 0 };
+		const scroller = view.scrollDOM;
+		return {
+			total: Math.max(pane.totalLines, view.state.doc.lines),
+			start: lineAtScroll(view, scroller.scrollTop),
+			end: lineAtScroll(view, scroller.scrollTop + scroller.clientHeight)
+		};
+	});
+
+	let jumpToken = 0;
+
+	/**
+	 * Scrolls the minimap's chosen line to the middle of the editor. A line past what has
+	 * streamed in so far loads more of the file first, until it is there.
+	 */
+	async function jump(line: number) {
+		const token = ++jumpToken;
+		const instance = view;
+		if (!instance) return;
+		while (!pane.fullyLoaded && !pane.error && instance.state.doc.lines <= line) {
+			// A newer jump, such as the next step of a drag, takes over.
+			if (token !== jumpToken) return;
+			if (pane.loading) await new Promise(requestAnimationFrame);
+			else {
+				await pane.loadMore();
+				await tick();
+			}
+		}
+		if (token !== jumpToken) return;
+		const doc = instance.state.doc;
+		const index = Math.min(doc.lines - 1, Math.max(0, Math.floor(line)));
+		const block = instance.lineBlockAt(doc.line(index + 1).from);
+		const scroller = instance.scrollDOM;
+		const y = instance.documentPadding.top + block.top + (line - index) * block.height;
+		scroller.scrollTop = y - scroller.clientHeight / 2;
+	}
 
 	/** The scale an image preview is drawn at: the pane's chosen zoom, or whatever fits. */
 	const previewScale = $derived(pane.previewZoom ?? fitZoom(bodyWidth, bodyHeight, pane.imageSize));
@@ -138,10 +245,16 @@
 					EditorView.updateListener.of((update) => {
 						const ours = update.transactions.some((tr) => tr.annotation(Programmatic));
 						if (update.docChanged && !ours) pane.setTextFromEditor(update.state.doc.toString());
+						// Untracked: this listener runs inside whichever effect dispatched the change, and
+						// reading the counter there would have that effect re-run itself.
+						if (update.docChanged) untrack(() => docRevision++);
+						if (update.docChanged || update.heightChanged || update.geometryChanged) layoutChanged();
 					}),
 					EditorView.domEventHandlers({
 						scroll: (_event, instance) => {
 							maybeLoadMore(instance);
+							sync.follow(side);
+							viewScrolled();
 						}
 					})
 				]
@@ -149,7 +262,12 @@
 		});
 
 		view = instance;
+		const detach = untrack(() => sync.attach(side, instance));
 		return () => {
+			detach();
+			cancelAnimationFrame(layoutFrame);
+			cancelAnimationFrame(scrollFrame);
+			layoutFrame = scrollFrame = 0;
 			instance.destroy();
 			view = null;
 		};
@@ -159,9 +277,13 @@
 	// dropped file, or Clear). Typing already left the document correct, and the
 	// equality check is what stops this from fighting the cursor.
 	$effect(() => {
-		const text = pane.text;
 		const instance = view;
 		if (!instance) return;
+		// CodeMirror keeps every line break as `\n`, so text with Windows or old Mac line
+		// endings is compared as it will be stored. Compared raw, a `\r\n` file never
+		// matched, and every chunk streamed in replaced the whole document instead of
+		// being appended to it.
+		const text = pane.text.includes('\r') ? pane.text.replace(/\r\n?/g, '\n') : pane.text;
 
 		const current = instance.state.doc.toString();
 		if (current === text) return;
@@ -441,7 +563,21 @@
 				onzoom={(next) => (pane.previewZoom = next)}
 			/>
 		{:else if pane.acceptsText}
-			<div class="h-full" {@attach codemirror}></div>
+			<div class="flex h-full">
+				<div class="h-full min-w-0 flex-1" {@attach codemirror}></div>
+				{#if !pane.isEmpty}
+					<ChangeStrip
+						total={stripView.total}
+						lineAt={stripLineAt}
+						maxScale={STRIP_LINE_PX}
+						revision={docRevision}
+						viewStart={stripView.start}
+						viewEnd={stripView.end}
+						onjump={(position) => void jump(position)}
+						onscrollby={(delta) => view?.scrollDOM.scrollBy({ top: delta })}
+					/>
+				{/if}
+			</div>
 		{/if}
 
 		{#if pane.isEmpty && !pane.loading}

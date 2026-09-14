@@ -155,6 +155,25 @@
 	background: repeating-conic-gradient(oklch(0.32 0 0) 0 25%, oklch(0.26 0 0) 0 50%) 0 0 / 16px 16px;
 }
 
+/*
+ * Where one side of a side by side view has nothing, so the gap reads as deliberately
+ * empty rather than as missing content. An 8px tile of diagonal stripes: every cell in a
+ * column starts a whole number of tiles in, so neighbouring cells join seamlessly, and a
+ * row that does not start on a tile boundary sets `--stripe-y` to line up with the rows above.
+ */
+@utility empty-stripes {
+	background-image: linear-gradient(
+		135deg,
+		var(--stripe-ink) 12.5%,
+		transparent 12.5% 50%,
+		var(--stripe-ink) 50% 62.5%,
+		transparent 62.5%
+	);
+	background-size: 8px 8px;
+	background-position: 0 var(--stripe-y, 0);
+	--stripe-ink: color-mix(in oklab, var(--color-foreground) 9%, transparent);
+}
+
 @layer base {
 	* {
 		@apply border-border outline-ring/50;
