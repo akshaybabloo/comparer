@@ -2,8 +2,8 @@ import { app, BrowserWindow, dialog, ipcMain, session, type OpenDialogOptions, t
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import { serviceHost } from './service-host';
-import type { Chunk, DocumentId, DocumentInfo, FolderEntryDocuments, OpenedInfo } from './shared/protocol';
-import type { DiffResult, FolderDiffResult } from './lib/diff-types';
+import type { Chunk, DocumentId, DocumentInfo, FolderEntryDocuments, OpenedInfo, PickKind } from './shared/protocol';
+import type { DiffResult, FolderDiffResult, ImageDiffResult } from './lib/diff-types';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -28,7 +28,8 @@ const CONTENT_SECURITY_POLICY = [
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self' data:",
-  "img-src 'self' data:",
+  // Image previews and diff images are shown from object URLs made in the renderer.
+  "img-src 'self' data: blob:",
   "connect-src 'self'",
   "object-src 'none'",
   "frame-src 'none'",
@@ -69,8 +70,18 @@ function registerIpc() {
     return serviceHost.send<OpenedInfo>({ type: 'open', path });
   });
 
-  ipcMain.handle('comparer:pick', (event) =>
-    pick(event.sender, { title: 'Open file', properties: ['openFile'] }),
+  // An image pane's partner may only take an image, so its picker only offers them.
+  ipcMain.handle('comparer:pick', (event, kind?: PickKind) =>
+    pick(
+      event.sender,
+      kind === 'image'
+        ? {
+            title: 'Open image',
+            properties: ['openFile'],
+            filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] }],
+          }
+        : { title: 'Open file', properties: ['openFile'] },
+    ),
   );
 
   ipcMain.handle('comparer:pick-folder', (event) =>
@@ -145,6 +156,21 @@ function registerIpc() {
         throw new Error('Two folders and a path are required');
       }
       return serviceHost.send<FolderEntryDocuments>({ type: 'openFolderEntry', left, right, path });
+    },
+  );
+
+  ipcMain.handle('comparer:read-image', (_event, docId: DocumentId): Promise<Uint8Array> => {
+    if (typeof docId !== 'string') throw new Error('An image is required');
+    return serviceHost.send<Uint8Array>({ type: 'readImage', docId });
+  });
+
+  ipcMain.handle(
+    'comparer:diff-images',
+    (_event, left: DocumentId, right: DocumentId, tolerance: number): Promise<ImageDiffResult> => {
+      if (typeof left !== 'string' || typeof right !== 'string' || typeof tolerance !== 'number') {
+        throw new Error('Two images and a tolerance are required');
+      }
+      return serviceHost.send<ImageDiffResult>({ type: 'diffImages', left, right, tolerance });
     },
   );
 

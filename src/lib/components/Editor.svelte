@@ -2,8 +2,11 @@
   import * as InputGroup from '$lib/components/ui/input-group';
   import * as Select from '$lib/components/ui/select';
   import { Button } from '$lib/components/ui/button';
+  import ImageViewport from '$lib/components/ImageViewport.svelte';
+  import ZoomControl from '$lib/components/ZoomControl.svelte';
   import { darkEditorExtensions } from '$lib/editor-theme';
   import { formatBytes, formatCount } from '$lib/format';
+  import { clampZoom, fitZoom } from '$lib/image-zoom';
   import { LANGUAGES } from '$lib/languages';
   import { HIGHLIGHT_LIMIT_BYTES, type PaneState } from '$lib/panes.svelte';
   import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
@@ -22,6 +25,7 @@
   import FileTextIcon from '@lucide/svelte/icons/file-text';
   import FolderIcon from '@lucide/svelte/icons/folder';
   import FolderOpenIcon from '@lucide/svelte/icons/folder-open';
+  import ImageIcon from '@lucide/svelte/icons/image';
   import { untrack } from 'svelte';
   import XIcon from '@lucide/svelte/icons/x';
 
@@ -50,6 +54,20 @@
   let view: EditorView | null = $state(null);
   let dragDepth = $state(0);
   let pathInput: HTMLInputElement | null = $state(null);
+  let bodyWidth = $state(0);
+  let bodyHeight = $state(0);
+
+  /** The scale an image preview is drawn at: the pane's chosen zoom, or whatever fits. */
+  const previewScale = $derived(pane.previewZoom ?? fitZoom(bodyWidth, bodyHeight, pane.imageSize));
+
+  /** What the empty pane asks for, which narrows once the other side holds something. */
+  const emptyPrompt = $derived(
+    pane.requiredKind === 'image'
+      ? 'Drop an image here'
+      : pane.requiredKind === 'folder'
+        ? 'Drop a folder here'
+        : placeholder,
+  );
 
   // A long path overflows the field; scroll it to the end so the filename and
   // its nearest folders stay visible rather than the drive or home directory.
@@ -178,10 +196,11 @@
   });
 
   // Typing into a partially streamed document would leave the unseen tail
-  // behind, so the rest is pulled in on the first attempt to edit.
+  // behind, so the rest is pulled in on the first attempt to edit. Nor can text
+  // be typed opposite an image or folder, which only compare with their own kind.
   $effect(() => {
     const streaming = !pane.fullyLoaded;
-    const readOnly = pane.loading || streaming;
+    const readOnly = pane.loading || streaming || !pane.acceptsText;
     view?.dispatch({
       effects: editableCompartment.reconfigure(EditorView.editable.of(!readOnly)),
     });
@@ -263,12 +282,18 @@
   ondropcapture={onDrop}
 >
   <header class="bg-card flex h-9 shrink-0 items-center gap-2 border-b px-2.5">
-    <span class="truncate text-xs font-medium" title={pane.filename || placeholder}>
-      {pane.filename || placeholder}
+    <span class="truncate text-xs font-medium" title={pane.filename || emptyPrompt}>
+      {pane.filename || emptyPrompt}
     </span>
 
     {#if pane.isFolder}
       <span class="text-muted-foreground shrink-0 text-[11px]">Folder</span>
+    {:else if pane.isImage}
+      <span class="text-muted-foreground shrink-0 text-[11px] tabular-nums">
+        Image{pane.imageSize ? ` · ${pane.imageSize.width}×${pane.imageSize.height}` : ''} · {formatBytes(
+          pane.byteLength,
+        )}
+      </span>
     {:else if !pane.isEmpty}
       <span class="text-muted-foreground shrink-0 text-[11px] tabular-nums">
         {formatCount(pane.lineCount)} lines · {formatBytes(pane.byteLength)}
@@ -288,7 +313,16 @@
     {/if}
 
     <div class="ml-auto flex shrink-0 items-center gap-1.5">
-      {#if !pane.highlightingAllowed && !pane.isEmpty}
+      {#if pane.isImage && pane.imageSize}
+        <ZoomControl
+          scale={previewScale}
+          fitted={pane.previewZoom === null}
+          onzoom={(next) => (pane.previewZoom = clampZoom(next))}
+          onfit={() => (pane.previewZoom = null)}
+        />
+      {/if}
+
+      {#if pane.kind === 'file' && !pane.highlightingAllowed && !pane.isEmpty}
         <span
           class="text-muted-foreground text-[11px]"
           title="Highlighting is off above {formatBytes(
@@ -299,8 +333,8 @@
         </span>
       {/if}
 
-      <!-- A folder has no single language to highlight. -->
-      {#if !pane.isFolder}
+      <!-- Only text has a language to highlight, and only a pane that can hold text needs one. -->
+      {#if pane.kind === 'file' && pane.acceptsText}
         <Select.Root
           type="single"
           value={pane.languageId}
@@ -344,36 +378,51 @@
         bind:ref={pathInput}
         readonly
         value={pane.path ?? ''}
-        placeholder={pane.isEmpty ? 'No file or folder' : 'Not saved to a file'}
+        placeholder={pane.isEmpty ? 'Nothing open' : 'Not saved to a file'}
         title={pane.path ?? undefined}
-        aria-label={pane.isFolder ? 'Folder location' : 'File location'}
+        aria-label={pane.isFolder ? 'Folder location' : pane.isImage ? 'Image location' : 'File location'}
         class="font-mono text-xs"
         onfocus={(event) => event.currentTarget.select()}
       />
+      <!-- Only the pickers for what the other side allows are offered. -->
       <InputGroup.Addon align="inline-end">
-        <InputGroup.Button
-          size="icon-xs"
-          onclick={() => pane.pickFile()}
-          disabled={pane.loading}
-          aria-label="Open a file"
-          title="Open a file"
-        >
-          <FileTextIcon />
-        </InputGroup.Button>
-        <InputGroup.Button
-          size="icon-xs"
-          onclick={() => pane.pickFolder()}
-          disabled={pane.loading}
-          aria-label="Open a folder"
-          title="Open a folder"
-        >
-          <FolderOpenIcon />
-        </InputGroup.Button>
+        {#if pane.requiredKind === 'image'}
+          <InputGroup.Button
+            size="icon-xs"
+            onclick={() => pane.pickFile('image')}
+            disabled={pane.loading}
+            aria-label="Open an image"
+            title="Open an image"
+          >
+            <ImageIcon />
+          </InputGroup.Button>
+        {:else if pane.requiredKind !== 'folder'}
+          <InputGroup.Button
+            size="icon-xs"
+            onclick={() => pane.pickFile()}
+            disabled={pane.loading}
+            aria-label="Open a file"
+            title="Open a file or image"
+          >
+            <FileTextIcon />
+          </InputGroup.Button>
+        {/if}
+        {#if pane.requiredKind === null || pane.requiredKind === 'folder'}
+          <InputGroup.Button
+            size="icon-xs"
+            onclick={() => pane.pickFolder()}
+            disabled={pane.loading}
+            aria-label="Open a folder"
+            title="Open a folder"
+          >
+            <FolderOpenIcon />
+          </InputGroup.Button>
+        {/if}
       </InputGroup.Addon>
     </InputGroup.Root>
   </div>
 
-  <div class="relative min-h-0 flex-1">
+  <div class="relative min-h-0 flex-1" bind:clientWidth={bodyWidth} bind:clientHeight={bodyHeight}>
     {#if pane.isFolder}
       <!-- Nothing inside the folder is read until it is compared, so there is
            only the folder itself to show. CodeMirror is unmounted meanwhile and
@@ -386,7 +435,16 @@
           <p class="text-muted-foreground text-[11px] opacity-70">Compare it with another folder</p>
         </div>
       </div>
-    {:else}
+    {:else if pane.isImage}
+      <ImageViewport
+        src={pane.imageUrl}
+        alt={pane.filename}
+        size={pane.imageSize}
+        scale={previewScale}
+        onload={(size) => (pane.imageSize = size)}
+        onzoom={(next) => (pane.previewZoom = next)}
+      />
+    {:else if pane.acceptsText}
       <div class="h-full" {@attach codemirror}></div>
     {/if}
 
@@ -395,8 +453,10 @@
         class="text-muted-foreground pointer-events-none absolute inset-0 grid place-items-center text-center"
       >
         <div class="space-y-1">
-          <p class="text-sm">{placeholder}</p>
-          <p class="text-[11px] opacity-70">or start typing</p>
+          <p class="text-sm">{emptyPrompt}</p>
+          {#if pane.acceptsText}
+            <p class="text-[11px] opacity-70">or start typing</p>
+          {/if}
         </div>
       </div>
     {/if}

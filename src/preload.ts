@@ -6,8 +6,9 @@ import type {
   DocumentInfo,
   FolderEntryDocuments,
   OpenedInfo,
+  PickKind,
 } from './shared/protocol';
-import type { DiffResult, FolderDiffResult, FolderProgress } from './lib/diff-types';
+import type { DiffResult, FolderDiffResult, FolderProgress, ImageDiffResult } from './lib/diff-types';
 
 /** Tags each folder comparison, so its progress is not mistaken for another's. */
 let nextFolderDiffToken = 1;
@@ -52,7 +53,7 @@ const bridge: ComparerBridge = {
     return invoke('comparer:adopt', null, text, file.name || 'dropped file');
   },
 
-  pickFile: (): Promise<OpenedInfo | null> => invoke('comparer:pick'),
+  pickFile: (kind?: PickKind): Promise<OpenedInfo | null> => invoke('comparer:pick', kind),
 
   pickFolder: (): Promise<OpenedInfo | null> => invoke('comparer:pick-folder'),
 
@@ -86,6 +87,11 @@ const bridge: ComparerBridge = {
 
   openFolderEntry: (left: DocumentId, right: DocumentId, path: string): Promise<FolderEntryDocuments> =>
     invoke('comparer:open-folder-entry', left, right, path),
+
+  readImage: (docId: DocumentId): Promise<Uint8Array> => invoke('comparer:read-image', docId),
+
+  diffImages: (left: DocumentId, right: DocumentId, tolerance: number): Promise<ImageDiffResult> =>
+    invoke('comparer:diff-images', left, right, tolerance),
 
   close: (docId: DocumentId): Promise<void> => invoke('comparer:close', docId),
 };

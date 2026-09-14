@@ -150,6 +150,11 @@
 	--color-unknown-ink: oklch(0.84 0.13 80);
 }
 
+/* Behind images, so transparent pixels read as transparent rather than as the page. */
+@utility checkerboard {
+	background: repeating-conic-gradient(oklch(0.32 0 0) 0 25%, oklch(0.26 0 0) 0 50%) 0 0 / 16px 16px;
+}
+
 @layer base {
 	* {
 		@apply border-border outline-ring/50;

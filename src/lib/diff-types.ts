@@ -48,6 +48,29 @@ export type FolderDiffResult = FolderDiff & {
   elapsedMs: number;
 };
 
+export type ImageSize = { width: number; height: number };
+
+/**
+ * Two images compared pixel by pixel, or found to be different sizes, which
+ * cannot be compared pixel by pixel but can still be looked at side by side.
+ */
+export type ImageDiffResult =
+  | {
+      kind: 'compared';
+      size: ImageSize;
+      /** The tolerance this result was computed at, from 0 to 100. */
+      tolerance: number;
+      differentPixels: number;
+      totalPixels: number;
+      /** `differentPixels` as a percentage of `totalPixels`. */
+      percent: number;
+      identical: boolean;
+      /** Differing pixels red, the rest of the left image faded to grey, as PNG. */
+      diffPng: Uint8Array;
+      elapsedMs: number;
+    }
+  | { kind: 'sizeMismatch'; left: ImageSize; right: ImageSize; elapsedMs: number };
+
 /** How far a folder comparison has got, reported while it runs. */
 export type FolderProgress =
   /** Listing both folders; `entries` counts every entry found so far. */

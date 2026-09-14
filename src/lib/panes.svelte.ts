@@ -1,5 +1,15 @@
+import type { ImageSize } from './diff-types';
 import { detectLanguage, languageById, LANGUAGES, PLAIN_TEXT, type Language } from './languages';
-import type { DocumentId, DocumentInfo, OpenedInfo } from '../shared/protocol';
+import type { DocumentId, DocumentInfo, OpenedInfo, PickKind } from '../shared/protocol';
+
+export type PaneKind = OpenedInfo['kind'];
+
+/** Why a pane refused an item: the other side holds a different kind of thing. */
+const MISMATCH: Record<PaneKind, string> = {
+  file: 'The other side is a text file, so only a text file can go here',
+  image: 'The other side is an image, so only an image can go here',
+  folder: 'The other side is a folder, so only a folder can go here',
+};
 
 /**
  * Above this size the grammar is dropped and the pane renders as plain text.
@@ -16,17 +26,21 @@ export const HIGHLIGHT_LIMIT_BYTES = 2 * 1024 * 1024;
 export const CHUNK_BYTES = 512 * 1024;
 
 /**
- * One side of the comparison: a document, or a folder.
+ * One side of the comparison: a text document, an image, or a folder.
  *
  * The authoritative text lives in the diff service, not here: this holds an
  * id, plus however much of the document has been streamed in for display. That
  * is what keeps a 10 MB file off the renderer's heap until someone looks at it,
  * and keeps it off the wire entirely when comparing. A folder is held the same
  * way, as an id the service can walk, with nothing of its contents loaded here.
+ * An image is the exception: its bytes are read once, to show a preview.
+ *
+ * Two panes are paired, and each only accepts the kind of thing the other holds,
+ * since a text file, an image and a folder cannot be compared with one another.
  */
 export class PaneState {
-  /** A folder pane shows no editor, and compares only against another folder. */
-  kind = $state<'file' | 'folder'>('file');
+  /** An image or folder pane shows no editor, and compares only against its own kind. */
+  kind = $state<PaneKind>('file');
   /** The slice currently loaded in the editor — a prefix of the document. */
   text = $state('');
   filename = $state('');
@@ -50,6 +64,16 @@ export class PaneState {
   /** Edited in the editor, so the service copy is stale. */
   dirty = $state(false);
 
+  /** Object URL of the image's bytes, for its preview; null unless this is an image. */
+  imageUrl = $state<string | null>(null);
+  /** The image's pixel size, known once its preview has loaded. */
+  imageSize = $state<ImageSize | null>(null);
+  /** The preview's scale, or null to fit it to the pane. */
+  previewZoom = $state<number | null>(null);
+
+  /** The other side of the comparison, which decides what this pane accepts. */
+  #partner = $state<PaneState | null>(null);
+
   /** Inferred from the dropped file's name, unless overridden in the picker. */
   languageId = $state(PLAIN_TEXT.id);
   /**
@@ -67,14 +91,28 @@ export class PaneState {
   readonly pendingBytes = $derived(Math.max(0, this.totalSize - this.loadedBytes));
 
   readonly isFolder = $derived(this.kind === 'folder');
+  readonly isImage = $derived(this.kind === 'image');
+  /** What this pane holds, or null while it holds nothing. Typed text is a `file`. */
+  readonly heldKind = $derived<PaneKind | null>(this.isEmpty ? null : this.kind);
+  /** The only kind this pane may take, because the other side holds it; null for any. */
+  readonly requiredKind = $derived<PaneKind | null>(this.#partner?.heldKind ?? null);
+  /** Text can be typed here: nothing on the other side rules it out. */
+  readonly acceptsText = $derived(this.requiredKind === null || this.requiredKind === 'file');
+
+  /** Makes each pane accept only the kind of thing the other holds. */
+  static pair(a: PaneState, b: PaneState) {
+    a.#partner = b;
+    b.#partner = a;
+  }
 
   #reset(info: OpenedInfo) {
+    this.#setImageUrl(null);
     this.kind = info.kind;
     this.docId = info.id;
     this.filename = info.name;
     this.path = info.path;
     // A folder's size and line count are not known without walking it.
-    this.totalSize = info.kind === 'file' ? info.size : 0;
+    this.totalSize = info.kind === 'folder' ? 0 : info.size;
     this.totalLines = info.kind === 'file' ? info.lineCount : 0;
     this.dirty = false;
     this.error = '';
@@ -88,9 +126,12 @@ export class PaneState {
     );
   }
 
-  /** Opens a file chosen in the native picker. Cancelling leaves the pane as it was. */
-  pickFile() {
-    return this.#open(() => window.comparer.pickFile(), 'Opening file…', 'Could not open the file');
+  /**
+   * Opens a file chosen in the native picker, which offers only images for `'image'`.
+   * Cancelling leaves the pane as it was.
+   */
+  pickFile(kind: PickKind = 'file') {
+    return this.#open(() => window.comparer.pickFile(kind), 'Opening file…', 'Could not open the file');
   }
 
   /**
@@ -121,16 +162,29 @@ export class PaneState {
       // as the slices requested below.
       const info = await request();
       if (!info) return;
+      // Checked only once the service has looked at the item, since whether a
+      // dropped file is an image depends on its contents rather than its name.
+      const required = this.requiredKind;
+      if (required && info.kind !== required) {
+        void window.comparer.close(info.id);
+        throw new Error(MISMATCH[required]);
+      }
       const previous = this.docId;
       this.#reset(info);
       if (previous && previous !== info.id) void window.comparer.close(previous);
       this.#languagePinned = false;
 
-      if (info.kind === 'folder') {
+      if (info.kind !== 'file') {
         this.languageId = PLAIN_TEXT.id;
         this.text = '';
         this.loadedBytes = 0;
         this.fullyLoaded = true;
+        this.previewZoom = null;
+        if (info.kind === 'image') {
+          const bytes = await window.comparer.readImage(info.id);
+          // A newer drop may have replaced this image while its bytes were on the way.
+          if (this.docId === info.id) this.#setImageUrl(URL.createObjectURL(new Blob([bytes as BlobPart])));
+        }
         return;
       }
 
@@ -205,10 +259,20 @@ export class PaneState {
     this.#languagePinned = true;
   }
 
+  /** Replaces the preview URL, releasing the one it replaces. */
+  #setImageUrl(url: string | null) {
+    if (this.imageUrl && this.imageUrl !== url) URL.revokeObjectURL(this.imageUrl);
+    this.imageUrl = url;
+    this.imageSize = null;
+  }
+
   /** Exchanges two panes wholesale, including their service documents. */
   static swap(a: PaneState, b: PaneState) {
     const snapshot = (pane: PaneState) => ({
       kind: pane.kind,
+      imageUrl: pane.imageUrl,
+      imageSize: pane.imageSize,
+      previewZoom: pane.previewZoom,
       text: pane.text,
       filename: pane.filename,
       path: pane.path,
@@ -234,6 +298,8 @@ export class PaneState {
 
   clear() {
     const previous = this.docId;
+    this.#setImageUrl(null);
+    this.previewZoom = null;
     this.kind = 'file';
     this.text = '';
     this.filename = '';

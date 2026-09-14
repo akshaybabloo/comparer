@@ -1,15 +1,16 @@
-import { compareFolders } from 'comparer-ts';
+import { compareFolders, createImagePair, type ImagePair } from 'comparer-ts';
 import { createReadStream } from 'node:fs';
 import { open as openHandle, readFile, realpath, stat } from 'node:fs/promises';
 import { basename, isAbsolute, join, sep } from 'node:path';
 import { toHunks, toRows } from '../lib/diff-hunks';
-import type { DiffResult, FolderDiffResult, FolderProgress } from '../lib/diff-types';
+import type { DiffResult, FolderDiffResult, FolderProgress, ImageDiffResult } from '../lib/diff-types';
 import type {
   Chunk,
   DocumentId,
   DocumentInfo,
   FolderEntryDocuments,
   FolderInfo,
+  ImageInfo,
   OpenedInfo,
   ServiceRequest,
   ServiceResponse,
@@ -26,6 +27,7 @@ import { describe, listFolder } from './folder-listing';
  * whatever slice it is currently showing, so comparing two 10 MB files never
  * moves 20 MB across a process boundary. Folders are held the same way: the
  * renderer gets an id, and only the service ever walks or reads what is inside.
+ * Images keep their bytes here too; the renderer reads them once, to preview.
  */
 
 type Document = {
@@ -40,7 +42,16 @@ type Document = {
 
 const documents = new Map<DocumentId, Document>();
 const folders = new Map<DocumentId, FolderInfo>();
+const images = new Map<DocumentId, ImageInfo & { bytes: Uint8Array }>();
 let nextDocId = 1;
+
+/**
+ * The last two images compared, decoded. Decoding is the slow part — about 100 ms
+ * for a pair of 4K screenshots against under 20 ms to count their differences — so
+ * moving the tolerance slider re-runs only the comparison. Just the one pair is
+ * kept: two decoded 4K images already hold 66 MB.
+ */
+let imagePair: { left: DocumentId; right: DocumentId; pair: ImagePair } | null = null;
 
 /** Aborts each cancellable request still running, keyed by request id. */
 const running = new Map<number, AbortController>();
@@ -58,6 +69,8 @@ const HASH_CONCURRENCY = 8;
 const PROGRESS_INTERVAL_MS = 100;
 /** How much of a file is checked for a NUL byte, as git does, to call it binary. */
 const BINARY_SNIFF_BYTES = 8000;
+/** Enough of a file's start to recognise every image format that can be compared. */
+const IMAGE_SNIFF_BYTES = 18;
 
 /** Index every line start once, so later range reads are two lookups. */
 function indexLines(text: string): number[] {
@@ -93,12 +106,85 @@ function get(docId: DocumentId): Document {
  * folder opens as that folder.
  */
 async function open(path: string): Promise<OpenedInfo> {
-  if ((await stat(path)).isDirectory()) {
+  const stats = await stat(path);
+  if (stats.isDirectory()) {
     const folder: FolderInfo = { kind: 'folder', id: `folder${nextDocId++}`, name: basename(path), path };
     folders.set(folder.id, folder);
     return folder;
   }
+  if (isComparableImage(await readStart(path, IMAGE_SNIFF_BYTES))) {
+    const bytes = await readFile(path);
+    const image: ImageInfo = { kind: 'image', id: `image${nextDocId++}`, name: basename(path), path, size: bytes.length };
+    images.set(image.id, { ...image, bytes });
+    return image;
+  }
   return openFile(path);
+}
+
+async function readStart(path: string, length: number): Promise<Uint8Array> {
+  const handle = await openHandle(path, 'r');
+  try {
+    const { buffer, bytesRead } = await handle.read(Buffer.alloc(length), 0, length, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Recognises PNG, JPEG, GIF, WebP and BMP — the formats comparer-ts decodes — by their
+ * signatures rather than the file name, so a screenshot saved without an extension
+ * still opens as an image and a text file named `.png` does not. SVG is text, and
+ * opens as text.
+ */
+function isComparableImage(start: Uint8Array): boolean {
+  const ascii = (from: number, to: number) => String.fromCharCode(...start.subarray(from, to));
+  const bytes = (...expected: number[]) => expected.every((byte, index) => start[index] === byte);
+
+  if (bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return true;
+  if (bytes(0xff, 0xd8, 0xff)) return true;
+  if (ascii(0, 6) === 'GIF87a' || ascii(0, 6) === 'GIF89a') return true;
+  if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return true;
+  // "BM" alone starts plenty of text files, so also require one of the header sizes a
+  // real bitmap declares right after its 14-byte file header.
+  if (ascii(0, 2) === 'BM' && start.length >= 18) {
+    const headerSize = start[14] | (start[15] << 8) | (start[16] << 16) | (start[17] << 24);
+    return [12, 40, 52, 56, 64, 108, 124].includes(headerSize);
+  }
+  return false;
+}
+
+function getImage(docId: DocumentId) {
+  const image = images.get(docId);
+  if (!image) throw new Error(`Unknown image ${docId}`);
+  return image;
+}
+
+function diffImages(left: DocumentId, right: DocumentId, tolerance: number): ImageDiffResult {
+  const startedAt = performance.now();
+  if (imagePair?.left !== left || imagePair.right !== right) {
+    const pair = createImagePair(getImage(left).bytes, getImage(right).bytes);
+    imagePair?.pair.free();
+    imagePair = { left, right, pair };
+  }
+
+  const { pair } = imagePair;
+  if (!pair.sameSize) {
+    return { kind: 'sizeMismatch', left: pair.left, right: pair.right, elapsedMs: performance.now() - startedAt };
+  }
+
+  const diff = pair.compare({ tolerance, diffPng: true });
+  return {
+    kind: 'compared',
+    size: { width: diff.width, height: diff.height },
+    tolerance,
+    differentPixels: diff.different_pixels,
+    totalPixels: diff.total_pixels,
+    percent: diff.percent,
+    identical: diff.identical,
+    diffPng: diff.diff_png!,
+    elapsedMs: performance.now() - startedAt,
+  };
 }
 
 async function openFile(path: string): Promise<DocumentInfo> {
@@ -292,9 +378,18 @@ async function handle(request: ServiceRequest): Promise<unknown> {
     case 'cancel':
       running.get(request.target)?.abort();
       return null;
+    case 'readImage':
+      return getImage(request.docId).bytes;
+    case 'diffImages':
+      return diffImages(request.left, request.right, request.tolerance);
     case 'close':
       documents.delete(request.docId);
       folders.delete(request.docId);
+      images.delete(request.docId);
+      if (imagePair?.left === request.docId || imagePair?.right === request.docId) {
+        imagePair.pair.free();
+        imagePair = null;
+      }
       return null;
   }
 }
