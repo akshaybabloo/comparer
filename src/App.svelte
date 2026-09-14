@@ -9,6 +9,7 @@
 	import FolderTree from '$lib/components/FolderTree.svelte';
 	import ImageDiffView from '$lib/components/ImageDiffView.svelte';
 	import type { DiffResult, FolderDiffResult, FolderProgress, ImageDiffResult } from '$lib/diff-types';
+	import { EditorSync } from '$lib/editor-sync.svelte';
 	import { changeSummary } from '$lib/folder-tree-model';
 	import { formatBytes, formatCount, formatPercent } from '$lib/format';
 	import { PaneState } from '$lib/panes.svelte';
@@ -23,6 +24,30 @@
 	const right = new PaneState();
 	// Each side only takes the kind of thing the other holds: text, an image or a folder.
 	PaneState.pair(left, right);
+
+	/** Keeps the two editors' matching lines level as either scrolls. */
+	const editorSync = new EditorSync();
+	/** How long typing has to pause before the editors are re-aligned, which re-diffs both texts. */
+	const REALIGN_DELAY_MS = 400;
+
+	// Aligns the editors whenever they hold two texts: straight away for newly opened
+	// documents, and once typing pauses for edits. Streaming more of a file into view
+	// changes neither the document nor its revision, so it never re-aligns.
+	let alignedRevision = 0;
+	$effect(() => {
+		const texts = left.kind === 'file' && right.kind === 'file' && !left.isEmpty && !right.isEmpty;
+		void [left.docId, right.docId];
+		const revision = left.revision + right.revision;
+		const edited = revision !== alignedRevision;
+		alignedRevision = revision;
+		if (!texts) {
+			editorSync.clear();
+			return;
+		}
+		const timer = setTimeout(() => void editorSync.refresh(left, right), edited ? REALIGN_DELAY_MS : 0);
+		return () => clearTimeout(timer);
+	});
+
 	/**
 	 * The two sides of a file opened from a folder comparison. Never shown in an
 	 * editor, so the folder panes above stay exactly as the user left them.
@@ -569,9 +594,9 @@
 			<DiffView {result} mode={diffMode} {wrap} />
 		{:else}
 			<div class="flex h-full">
-				<Editor pane={left} placeholder="Drop the original file or folder here" {wrap} />
+				<Editor pane={left} side="left" sync={editorSync} placeholder="Drop the original file or folder here" {wrap} />
 				<div class="w-px shrink-0 bg-border"></div>
-				<Editor pane={right} placeholder="Drop the changed file or folder here" {wrap} />
+				<Editor pane={right} side="right" sync={editorSync} placeholder="Drop the changed file or folder here" {wrap} />
 			</div>
 		{/if}
 

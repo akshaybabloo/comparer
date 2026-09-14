@@ -1,6 +1,9 @@
 <script lang="ts">
+	import ChangeStrip from '$lib/components/ChangeStrip.svelte';
 	import { formatCount } from '$lib/format';
 	import type { DiffResult, DiffRow } from '$lib/diff-types';
+	import { measureText, type StripCell, type StripLine } from '$lib/minimap';
+	import type { ChangeKind, ChangeMark } from '$lib/line-alignment';
 	import {
 		columnsOf,
 		hasTabs,
@@ -211,6 +214,47 @@
 		scrollLeft = 0;
 	});
 
+	function stripCell(row: DiffRow | null, kind: ChangeKind | null): StripCell {
+		if (!row) return { indent: 0, length: 0, kind: null };
+		return { ...measureText(row.segments.map((segment) => segment.value)), kind };
+	}
+
+	/** The row at a height in the diff, for the minimap: one cell unified, two side by side. */
+	function stripLineAt(y: number): StripLine | null {
+		if (rows.length === 0) return null;
+		const index = indexAt(y);
+		const item = rows[index];
+		if (item.kind === 'collapsed') return null;
+		const [top, bottom] = [offsets[index], offsets[index + 1]];
+		const kind = changeOf(item);
+		if (item.kind === 'row') return { top, bottom, cells: [stripCell(item.row, kind)] };
+		// Each half takes the pair's colour only if that half is the one that changed.
+		const leftKind = item.left?.tag === 'delete' ? kind : null;
+		const rightKind = item.right?.tag === 'insert' ? kind : null;
+		return { top, bottom, cells: [stripCell(item.left, leftKind), stripCell(item.right, rightKind)] };
+	}
+
+	function changeOf(item: (typeof rows)[number]): ChangeKind | null {
+		if (item.kind === 'collapsed') return null;
+		if (item.kind === 'row') return item.row.tag === 'insert' ? 'add' : item.row.tag === 'delete' ? 'del' : null;
+		const removed = item.left?.tag === 'delete';
+		const added = item.right?.tag === 'insert';
+		return removed && added ? 'mod' : removed ? 'del' : added ? 'add' : null;
+	}
+
+	/** Changed rows for the minimap, merged into runs, in pixels down the diff. */
+	const marks = $derived.by(() => {
+		const out: ChangeMark[] = [];
+		for (let i = 0; i < rows.length; i++) {
+			const kind = changeOf(rows[i]);
+			if (!kind) continue;
+			const last = out.at(-1);
+			if (last && last.kind === kind && last.end === offsets[i]) last.end = offsets[i + 1];
+			else out.push({ start: offsets[i], end: offsets[i + 1], kind });
+		}
+		return out;
+	});
+
 	function onScroll(event: Event) {
 		const el = event.currentTarget as HTMLElement;
 		scrollTop = el.scrollTop;
@@ -311,70 +355,86 @@
 		</div>
 	</div>
 {:else}
-	<div
-		bind:this={viewport}
-		bind:clientHeight={viewportHeight}
-		bind:clientWidth={viewportWidth}
-		onscroll={onScroll}
-		style:tab-size={TAB_SIZE}
-		class="h-full overflow-auto font-mono text-[12.5px] leading-5 {wrap ? 'overflow-x-hidden' : ''}"
-	>
-		<!-- Spacer carries the full scroll height; only `visible` is in the DOM.
+	<div class="flex h-full">
+		<div
+			bind:this={viewport}
+			bind:clientHeight={viewportHeight}
+			bind:clientWidth={viewportWidth}
+			onscroll={onScroll}
+			style:tab-size={TAB_SIZE}
+			class="h-full min-w-0 flex-1 overflow-auto font-mono text-[12.5px] leading-5 {wrap ? 'overflow-x-hidden' : ''}"
+		>
+			<!-- Spacer carries the full scroll height; only `visible` is in the DOM.
          When panning it also carries the horizontal track, while the rows stay
          pinned to the viewport and move their text instead. -->
-		<div
-			style:height="{totalHeight}px"
-			style:width={panned ? `${viewportWidth + panTrack}px` : undefined}
-			class="relative {panned ? '' : wrap ? 'w-full' : 'w-max min-w-full'}"
-		>
 			<div
-				style:transform="translateY({offsetY}px)"
-				style:width={panned ? `${viewportWidth}px` : undefined}
-				class={panned ? 'sticky left-0' : 'absolute inset-x-0 top-0'}
+				style:height="{totalHeight}px"
+				style:width={panned ? `${viewportWidth + panTrack}px` : undefined}
+				class="relative {panned ? '' : wrap ? 'w-full' : 'w-max min-w-full'}"
 			>
-				{#each visible as item, offset (item.key)}
-					{@const index = firstVisible + offset}
-					{#if item.kind === 'collapsed'}
-						<div
-							class="flex items-center gap-2 bg-muted/40 px-3 text-muted-foreground select-none"
-							style:height="{LINE_HEIGHT}px"
-						>
-							<span class="h-px flex-1 bg-current opacity-20"></span>
-							<span class="text-[11px] tabular-nums"
-								>{formatCount(item.count)} unchanged {item.count === 1 ? 'line' : 'lines'}</span
+				<div
+					style:transform="translateY({offsetY}px)"
+					style:width={panned ? `${viewportWidth}px` : undefined}
+					class={panned ? 'sticky left-0' : 'absolute inset-x-0 top-0'}
+				>
+					{#each visible as item, offset (item.key)}
+						{@const index = firstVisible + offset}
+						{#if item.kind === 'collapsed'}
+							<div
+								class="flex items-center gap-2 bg-muted/40 px-3 text-muted-foreground select-none"
+								style:height="{LINE_HEIGHT}px"
 							>
-							<span class="h-px flex-1 bg-current opacity-20"></span>
-						</div>
-					{:else if item.kind === 'row'}
-						<div class="flex">
-							<span class="{gutterClass(item.row)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none">
-								{item.row.oldLine ?? ''}
-							</span>
-							<span class="{gutterClass(item.row)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none">
-								{item.row.newLine ?? ''}
-							</span>
-							<span class="{bodyClass(item.row)} w-4 shrink-0 text-center select-none">
-								{marker(item.row)}
-							</span>
-							{@render cell(item.row, index, 'pr-4')}
-						</div>
-					{:else}
-						<div class="flex">
-							<!-- Left / original -->
-							<span class="{gutterClass(item.left)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none">
-								{item.left?.oldLine ?? ''}
-							</span>
-							{@render cell(item.left, index, 'border-r pr-4')}
+								<span class="h-px flex-1 bg-current opacity-20"></span>
+								<span class="text-[11px] tabular-nums"
+									>{formatCount(item.count)} unchanged {item.count === 1 ? 'line' : 'lines'}</span
+								>
+								<span class="h-px flex-1 bg-current opacity-20"></span>
+							</div>
+						{:else if item.kind === 'row'}
+							<div class="flex">
+								<span class="{gutterClass(item.row)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none">
+									{item.row.oldLine ?? ''}
+								</span>
+								<span class="{gutterClass(item.row)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none">
+									{item.row.newLine ?? ''}
+								</span>
+								<span class="{bodyClass(item.row)} w-4 shrink-0 text-center select-none">
+									{marker(item.row)}
+								</span>
+								{@render cell(item.row, index, 'pr-4')}
+							</div>
+						{:else}
+							<div class="flex">
+								<!-- Left / original -->
+								<span
+									class="{gutterClass(item.left)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none"
+								>
+									{item.left?.oldLine ?? ''}
+								</span>
+								{@render cell(item.left, index, 'border-r pr-4')}
 
-							<!-- Right / changed -->
-							<span class="{gutterClass(item.right)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none">
-								{item.right?.newLine ?? ''}
-							</span>
-							{@render cell(item.right, index, 'pr-4')}
-						</div>
-					{/if}
-				{/each}
+								<!-- Right / changed -->
+								<span
+									class="{gutterClass(item.right)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none"
+								>
+									{item.right?.newLine ?? ''}
+								</span>
+								{@render cell(item.right, index, 'pr-4')}
+							</div>
+						{/if}
+					{/each}
+				</div>
 			</div>
 		</div>
+		<ChangeStrip
+			{marks}
+			total={totalHeight}
+			lineAt={stripLineAt}
+			viewStart={scrollTop}
+			viewEnd={scrollTop + viewportHeight}
+			onjump={(position) => {
+				if (viewport) viewport.scrollTop = position - viewportHeight / 2;
+			}}
+		/>
 	</div>
 {/if}

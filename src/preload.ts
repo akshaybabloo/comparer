@@ -9,6 +9,7 @@ import type {
 	PickKind
 } from './shared/protocol';
 import type { DiffResult, FolderDiffResult, FolderProgress, ImageDiffResult } from './lib/diff-types';
+import type { LineChunk } from './lib/line-alignment';
 
 /** Tags each folder comparison, so its progress is not mistaken for another's. */
 let nextFolderDiffToken = 1;
@@ -87,6 +88,9 @@ const bridge: ComparerBridge = {
 
 	openFolderEntry: (left: DocumentId, right: DocumentId, path: string): Promise<FolderEntryDocuments> =>
 		invoke('comparer:open-folder-entry', left, right, path),
+
+	lineChunks: (left: DocumentId, right: DocumentId): Promise<LineChunk[]> =>
+		invoke('comparer:line-chunks', left, right),
 
 	readImage: (docId: DocumentId): Promise<Uint8Array> => invoke('comparer:read-image', docId),
 

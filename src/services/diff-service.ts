@@ -1,4 +1,4 @@
-import { compareFolders, createImagePair, type ImagePair } from 'comparer-ts';
+import { compareFolders, createImagePair, generateDiff, type ImagePair } from 'comparer-ts';
 import { createReadStream } from 'node:fs';
 import { open as openHandle, readFile, realpath, stat } from 'node:fs/promises';
 import { basename, isAbsolute, join, sep } from 'node:path';
@@ -15,6 +15,7 @@ import type {
 	ServiceRequest,
 	ServiceResponse
 } from '../shared/protocol';
+import { chunksFromLines, type LineChunk } from '../lib/line-alignment';
 import { describe, listFolder } from './folder-listing';
 
 /**
@@ -290,6 +291,10 @@ function diff(left: DocumentId | null, right: DocumentId | null, context: number
 	};
 }
 
+function lineChunks(left: DocumentId, right: DocumentId): LineChunk[] {
+	return chunksFromLines(generateDiff(get(left).text, get(right).text));
+}
+
 async function* readWhole(file: string, signal: AbortSignal) {
 	yield await readFile(file, { signal });
 }
@@ -366,6 +371,8 @@ async function handle(request: ServiceRequest): Promise<unknown> {
 			return chunk(request.docId, request.from, request.maxBytes);
 		case 'diff':
 			return diff(request.left, request.right, request.context, request.maxRows);
+		case 'lineChunks':
+			return lineChunks(request.left, request.right);
 		case 'diffFolders':
 			return diffFolders(request.id, request.left, request.right);
 		case 'openFolderEntry':

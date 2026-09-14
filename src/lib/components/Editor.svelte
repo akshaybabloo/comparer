@@ -2,12 +2,16 @@
 	import * as InputGroup from '$lib/components/ui/input-group';
 	import * as Select from '$lib/components/ui/select';
 	import { Button } from '$lib/components/ui/button';
+	import ChangeStrip from '$lib/components/ChangeStrip.svelte';
 	import ImageViewport from '$lib/components/ImageViewport.svelte';
 	import ZoomControl from '$lib/components/ZoomControl.svelte';
+	import type { EditorSync } from '$lib/editor-sync.svelte';
 	import { darkEditorExtensions } from '$lib/editor-theme';
 	import { formatBytes, formatCount } from '$lib/format';
 	import { clampZoom, fitZoom } from '$lib/image-zoom';
 	import { LANGUAGES } from '$lib/languages';
+	import type { Side } from '$lib/line-alignment';
+	import { measureText, STRIP_COLUMNS, type StripLine } from '$lib/minimap';
 	import { HIGHLIGHT_LIMIT_BYTES, type PaneState } from '$lib/panes.svelte';
 	import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 	import { bracketMatching, foldGutter, indentOnInput, indentUnit } from '@codemirror/language';
@@ -26,7 +30,7 @@
 	import FolderIcon from '@lucide/svelte/icons/folder';
 	import FolderOpenIcon from '@lucide/svelte/icons/folder-open';
 	import ImageIcon from '@lucide/svelte/icons/image';
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import XIcon from '@lucide/svelte/icons/x';
 
 	type Props = {
@@ -35,9 +39,13 @@
 		placeholder: string;
 		/** Turns line wrapping on, shared with the other pane. */
 		wrap: boolean;
+		/** Which side of the comparison this is. */
+		side: Side;
+		/** Keeps this editor level with the other one, and supplies its minimap's change marks. */
+		sync: EditorSync;
 	};
 
-	let { pane, placeholder, wrap }: Props = $props();
+	let { pane, placeholder, wrap, side, sync }: Props = $props();
 
 	/**
 	 * Marks transactions this component dispatched itself — streaming a chunk in,
@@ -56,6 +64,104 @@
 	let pathInput: HTMLInputElement | null = $state(null);
 	let bodyWidth = $state(0);
 	let bodyHeight = $state(0);
+
+	/*
+	 * The editor's layout lives in CodeMirror rather than in Svelte state, so the minimap
+	 * reads it again whenever these counters move: `layout` when the document or its line
+	 * heights change, `scrolled` when the view scrolls. Each is bumped at most once a frame.
+	 */
+	let layout = $state(0);
+	let scrolled = $state(0);
+	let layoutFrame = 0;
+	let scrollFrame = 0;
+
+	function layoutChanged() {
+		layoutFrame ||= requestAnimationFrame(() => {
+			layoutFrame = 0;
+			layout++;
+		});
+	}
+
+	function viewScrolled() {
+		scrollFrame ||= requestAnimationFrame(() => {
+			scrollFrame = 0;
+			scrolled++;
+		});
+	}
+
+	/**
+	 * The average height of the lines the editor holds so far. A large file streams in as
+	 * it is scrolled, so the rest of it is sized from this until its text arrives.
+	 */
+	function averageLineHeight(instance: EditorView): number {
+		const doc = instance.state.doc;
+		return instance.lineBlockAt(doc.length).bottom / doc.lines || instance.defaultLineHeight;
+	}
+
+	const stripMarks = $derived.by(() => {
+		void layout;
+		return view ? sync.marks(side, view, averageLineHeight(view)) : [];
+	});
+
+	/**
+	 * The line at a height in the editor, for the minimap. Only the first columns of it are
+	 * read: taking a whole megabyte-long line out of the document for every row of the
+	 * minimap would stall it.
+	 */
+	function stripLineAt(y: number): StripLine | null {
+		if (!view) return null;
+		const padding = view.documentPadding.top;
+		const block = view.lineBlockAtHeight(y - padding);
+		if (y - padding > block.bottom) return null;
+		const line = view.state.doc.lineAt(block.from);
+		const text = view.state.doc.sliceString(line.from, Math.min(line.to, line.from + STRIP_COLUMNS));
+		return {
+			top: block.top + padding,
+			bottom: block.bottom + padding,
+			cells: [{ ...measureText(text), kind: sync.kindAt(side, line.number - 1) }]
+		};
+	}
+
+	/**
+	 * What the minimap shows is on screen, against the height of the whole file. While a file
+	 * is still streaming in, lines not yet loaded count at the average height of those that
+	 * are — otherwise every chunk arriving would squeeze the minimap's lines closer together.
+	 */
+	const stripView = $derived.by(() => {
+		void layout;
+		void scrolled;
+		if (!view) return { total: 0, start: 0, end: 0 };
+		const scroller = view.scrollDOM;
+		const unloaded = Math.max(0, pane.totalLines - view.state.doc.lines);
+		return {
+			total: scroller.scrollHeight + unloaded * averageLineHeight(view),
+			start: scroller.scrollTop,
+			end: scroller.scrollTop + scroller.clientHeight
+		};
+	});
+
+	let jumpToken = 0;
+
+	/**
+	 * Scrolls the minimap's chosen spot to the middle of the editor. A spot past what has
+	 * streamed in so far loads more of the file first, until there is something there.
+	 */
+	async function jump(position: number) {
+		const token = ++jumpToken;
+		const instance = view;
+		if (!instance) return;
+		const scroller = instance.scrollDOM;
+		while (!pane.fullyLoaded && !pane.error && scroller.scrollHeight < position + scroller.clientHeight / 2) {
+			// A newer jump, such as the next step of a drag, takes over.
+			if (token !== jumpToken) return;
+			if (pane.loading) await new Promise(requestAnimationFrame);
+			else {
+				await pane.loadMore();
+				await tick();
+			}
+		}
+		if (token === jumpToken) scroller.scrollTop = position - scroller.clientHeight / 2;
+	}
 
 	/** The scale an image preview is drawn at: the pane's chosen zoom, or whatever fits. */
 	const previewScale = $derived(pane.previewZoom ?? fitZoom(bodyWidth, bodyHeight, pane.imageSize));
@@ -138,10 +244,13 @@
 					EditorView.updateListener.of((update) => {
 						const ours = update.transactions.some((tr) => tr.annotation(Programmatic));
 						if (update.docChanged && !ours) pane.setTextFromEditor(update.state.doc.toString());
+						if (update.docChanged || update.heightChanged || update.geometryChanged) layoutChanged();
 					}),
 					EditorView.domEventHandlers({
 						scroll: (_event, instance) => {
 							maybeLoadMore(instance);
+							sync.follow(side);
+							viewScrolled();
 						}
 					})
 				]
@@ -149,7 +258,12 @@
 		});
 
 		view = instance;
+		const detach = untrack(() => sync.attach(side, instance));
 		return () => {
+			detach();
+			cancelAnimationFrame(layoutFrame);
+			cancelAnimationFrame(scrollFrame);
+			layoutFrame = scrollFrame = 0;
 			instance.destroy();
 			view = null;
 		};
@@ -441,7 +555,20 @@
 				onzoom={(next) => (pane.previewZoom = next)}
 			/>
 		{:else if pane.acceptsText}
-			<div class="h-full" {@attach codemirror}></div>
+			<div class="flex h-full">
+				<div class="h-full min-w-0 flex-1" {@attach codemirror}></div>
+				{#if !pane.isEmpty}
+					<ChangeStrip
+						marks={stripMarks}
+						total={stripView.total}
+						lineAt={stripLineAt}
+						revision={layout}
+						viewStart={stripView.start}
+						viewEnd={stripView.end}
+						onjump={(position) => void jump(position)}
+					/>
+				{/if}
+			</div>
 		{/if}
 
 		{#if pane.isEmpty && !pane.loading}

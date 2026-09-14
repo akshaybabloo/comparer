@@ -63,6 +63,8 @@ export class PaneState {
 	fullyLoaded = $state(true);
 	/** Edited in the editor, so the service copy is stale. */
 	dirty = $state(false);
+	/** Counts edits made in the editor, and nothing else, for work that should follow typing. */
+	revision = $state(0);
 
 	/** Object URL of the image's bytes, for its preview; null unless this is an image. */
 	imageUrl = $state<string | null>(null);
@@ -231,6 +233,7 @@ export class PaneState {
 	 */
 	setTextFromEditor(next: string) {
 		this.text = next;
+		this.revision++;
 		if (this.docId !== null || next.length > 0) this.dirty = true;
 		this.totalSize = next.length;
 		this.totalLines = countLines(next);
@@ -243,10 +246,19 @@ export class PaneState {
 		if (!this.dirty) return this.docId;
 		if (this.text.length === 0 && this.docId === null) return null;
 
-		const info = await window.comparer.adoptText(this.docId, this.text, this.filename || 'untitled');
+		const text = this.text;
+		const info = await window.comparer.adoptText(this.docId, text, this.filename || 'untitled');
 		this.#reset(info);
 		this.loadedBytes = info.size;
 		this.fullyLoaded = true;
+		// Typing while the text was on its way leaves the service a step behind, so the
+		// pane stays dirty for the next sync to catch up rather than losing those edits.
+		if (this.text !== text) {
+			this.dirty = true;
+			this.totalSize = this.text.length;
+			this.totalLines = countLines(this.text);
+			this.loadedBytes = this.text.length;
+		}
 		return info.id;
 	}
 

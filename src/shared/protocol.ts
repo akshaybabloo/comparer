@@ -1,4 +1,5 @@
 import type { DiffResult, FolderDiffResult, FolderProgress, ImageDiffResult } from '../lib/diff-types';
+import type { LineChunk } from '../lib/line-alignment';
 
 /**
  * The contract between the renderer, the main process and the diff service.
@@ -78,6 +79,7 @@ export type ServiceRequest =
 	| { type: 'diff'; id: number; left: DocumentId | null; right: DocumentId | null; context: number; maxRows: number }
 	| { type: 'diffFolders'; id: number; left: DocumentId; right: DocumentId }
 	| { type: 'openFolderEntry'; id: number; left: DocumentId; right: DocumentId; path: string }
+	| { type: 'lineChunks'; id: number; left: DocumentId; right: DocumentId }
 	| { type: 'readImage'; id: number; docId: DocumentId }
 	| { type: 'diffImages'; id: number; left: DocumentId; right: DocumentId; tolerance: number }
 	/** Stops the in-flight request with id `target`, which then fails as cancelled. */
@@ -128,6 +130,12 @@ export type ComparerBridge = {
 	 */
 	openFolderEntry: (left: DocumentId, right: DocumentId, path: string) => Promise<FolderEntryDocuments>;
 	/** The bytes of an opened image, for previewing it. */
+	/**
+	 * Which line ranges differ between two documents, for keeping the editors level as
+	 * they scroll and marking their minimaps. Lighter than `diff`: no word-level pass, and
+	 * only the changed stretches come back.
+	 */
+	lineChunks: (left: DocumentId, right: DocumentId) => Promise<LineChunk[]>;
 	readImage: (docId: DocumentId) => Promise<Uint8Array>;
 	/**
 	 * Compares two opened images. Both are decoded once and kept, so calling this again

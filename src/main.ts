@@ -4,6 +4,7 @@ import started from 'electron-squirrel-startup';
 import { serviceHost } from './service-host';
 import type { Chunk, DocumentId, DocumentInfo, FolderEntryDocuments, OpenedInfo, PickKind } from './shared/protocol';
 import type { DiffResult, FolderDiffResult, ImageDiffResult } from './lib/diff-types';
+import type { LineChunk } from './lib/line-alignment';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -43,7 +44,12 @@ const CONTENT_SECURITY_POLICY = [
  * — the only path that ever reaches disk is one the user dropped, resolved by
  * the preload from a real drop event.
  */
-const DIFF_CONTEXT_LINES = 3;
+/**
+ * Equal lines kept either side of a change. Unlimited, so a diff shows the whole file
+ * with every unchanged line in place, rather than only the stretches around changes.
+ */
+const DIFF_CONTEXT_LINES = Number.POSITIVE_INFINITY;
+/** Rows beyond this are cut off, and the diff is marked truncated, to keep a huge file renderable. */
 const DIFF_MAX_ROWS = 200_000;
 
 /**
@@ -154,6 +160,11 @@ function registerIpc() {
 			return serviceHost.send<FolderEntryDocuments>({ type: 'openFolderEntry', left, right, path });
 		}
 	);
+
+	ipcMain.handle('comparer:line-chunks', (_event, left: DocumentId, right: DocumentId): Promise<LineChunk[]> => {
+		if (typeof left !== 'string' || typeof right !== 'string') throw new Error('Two documents are required');
+		return serviceHost.send<LineChunk[]>({ type: 'lineChunks', left, right });
+	});
 
 	ipcMain.handle('comparer:read-image', (_event, docId: DocumentId): Promise<Uint8Array> => {
 		if (typeof docId !== 'string') throw new Error('An image is required');
