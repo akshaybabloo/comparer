@@ -1,3 +1,4 @@
+import type { StreamParser } from '@codemirror/language';
 import type { Extension } from '@codemirror/state';
 
 /**
@@ -18,10 +19,9 @@ export type Language = {
 };
 
 /** Wraps a CodeMirror 5 style stream parser as a modern language. */
-async function stream(load: () => Promise<{ parser: unknown }>): Promise<Extension> {
+async function stream(load: () => Promise<{ parser: StreamParser<unknown> }>): Promise<Extension> {
 	const [{ StreamLanguage }, mod] = await Promise.all([import('@codemirror/language'), load()]);
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	return StreamLanguage.define(mod.parser as any);
+	return StreamLanguage.define(mod.parser);
 }
 
 export const PLAIN_TEXT: Language = {

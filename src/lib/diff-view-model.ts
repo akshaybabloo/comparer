@@ -1,4 +1,4 @@
-import type { DiffHunk, DiffRow, DiffSegment } from './diff-types';
+import type { DiffHunk, DiffRow } from './diff-types';
 
 export type VisualRow =
 	/** Stands in for equal lines omitted between two hunks. */

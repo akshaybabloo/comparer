@@ -256,6 +256,45 @@
 		PaneState.swap(left, right);
 	}
 
+	/*
+	 * Get/set pairs for the header's toggle groups, bound as `bind:value={get, set}`.
+	 * A single-select toggle group clears itself when you click the item that is
+	 * already active, which would leave nothing selected — the app showing neither
+	 * Editors nor Diff, say. Each setter drops that empty value, so the current
+	 * choice always stays selected.
+	 */
+
+	function getView() {
+		return view;
+	}
+
+	function setView(next: string) {
+		if (next === 'edit' || next === 'diff') view = next;
+	}
+
+	/**
+	 * Images of different sizes can only be shown side by side. That is shown without
+	 * changing the chosen mode, so the next comparison opens the way it was left.
+	 */
+	function getImageMode() {
+		return currentImage?.diff.kind === 'sizeMismatch' ? 'split' : imageMode;
+	}
+
+	function setImageMode(next: string) {
+		if (next === 'diff' || next === 'split') imageMode = next;
+	}
+
+	/** A folder tree and a file diff each remember their own unified or split choice. */
+	function getDiffMode() {
+		return folderResult && !entry ? folderMode : diffMode;
+	}
+
+	function setDiffMode(next: string) {
+		if (next !== 'unified' && next !== 'split') return;
+		if (folderResult && !entry) folderMode = next;
+		else diffMode = next;
+	}
+
 	/**
 	 * A file dropped anywhere outside a pane would otherwise make the window
 	 * navigate to it, replacing the app with the raw file — which reads as the
@@ -298,18 +337,9 @@
 			<span class="text-sm font-semibold tracking-tight">Comparer</span>
 		</div>
 
-		<!-- A get/set binding rather than a plain `bind:`: a single-select toggle
-         group clears itself when you click the item that is already active,
-         which would leave the app showing neither Editors nor Diff. The setter
-         drops that empty value, so the current view always stays selected. -->
 		<ToggleGroup.Root
 			type="single"
-			bind:value={
-				() => view,
-				(next) => {
-					if (next === 'edit' || next === 'diff') view = next;
-				}
-			}
+			bind:value={getView, setView}
 			variant="outline"
 			size="sm"
 			class="[app-region:no-drag]"
@@ -323,14 +353,7 @@
 		{#if view === 'diff' && currentImage && !folderResult}
 			<ToggleGroup.Root
 				type="single"
-				bind:value={
-					// Images of different sizes can only be shown side by side, which leaves the
-					// chosen mode alone for the next comparison.
-					(() => (currentImage.diff.kind === 'sizeMismatch' ? 'split' : imageMode),
-					(next) => {
-						if (next === 'diff' || next === 'split') imageMode = next;
-					}
-				}
+				bind:value={getImageMode, setImageMode}
 				variant="outline"
 				size="sm"
 				class="[app-region:no-drag]"
@@ -347,14 +370,7 @@
 		{:else if view === 'diff' && (result || folderResult)}
 			<ToggleGroup.Root
 				type="single"
-				bind:value={
-					() => (folderResult && !entry ? folderMode : diffMode),
-					(next) => {
-						if (next !== 'unified' && next !== 'split') return;
-						if (folderResult && !entry) folderMode = next;
-						else diffMode = next;
-					}
-				}
+				bind:value={getDiffMode, setDiffMode}
 				variant="outline"
 				size="sm"
 				class="[app-region:no-drag]"
