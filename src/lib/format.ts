@@ -20,3 +20,12 @@ export function formatBytes(bytes: number): string {
 export function formatCount(value: number): string {
   return value.toLocaleString('en-US');
 }
+
+/** A share of something, with more precision the smaller it is: `12%`, `3.4%`, `0.25%`, `<0.01%`. */
+export function formatPercent(percent: number): string {
+  if (percent === 0) return '0%';
+  if (percent < 0.01) return '<0.01%';
+  if (percent < 1) return `${percent.toFixed(2)}%`;
+  if (percent < 10) return `${percent.toFixed(1)}%`;
+  return `${Math.round(percent)}%`;
+}

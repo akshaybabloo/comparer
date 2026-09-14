@@ -1,14 +1,16 @@
 <script lang="ts">
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
+  import { Slider } from '$lib/components/ui/slider';
   import { Switch } from '$lib/components/ui/switch';
   import * as ToggleGroup from '$lib/components/ui/toggle-group';
   import DiffView from '$lib/components/DiffView.svelte';
   import Editor from '$lib/components/Editor.svelte';
   import FolderTree from '$lib/components/FolderTree.svelte';
-  import type { DiffResult, FolderDiffResult, FolderProgress } from '$lib/diff-types';
+  import ImageDiffView from '$lib/components/ImageDiffView.svelte';
+  import type { DiffResult, FolderDiffResult, FolderProgress, ImageDiffResult } from '$lib/diff-types';
   import { changeSummary } from '$lib/folder-tree-model';
-  import { formatBytes, formatCount } from '$lib/format';
+  import { formatBytes, formatCount, formatPercent } from '$lib/format';
   import { PaneState } from '$lib/panes.svelte';
   import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
   import ArrowLeftRightIcon from '@lucide/svelte/icons/arrow-left-right';
@@ -19,6 +21,8 @@
 
   const left = new PaneState();
   const right = new PaneState();
+  // Each side only takes the kind of thing the other holds: text, an image or a folder.
+  PaneState.pair(left, right);
   /**
    * The two sides of a file opened from a folder comparison. Never shown in an
    * editor, so the folder panes above stay exactly as the user left them.
@@ -32,6 +36,9 @@
   let folderMode = $state<'unified' | 'split'>('split');
   let wrap = $state(true);
   let hideUnchanged = $state(false);
+  /** Colour difference to tolerate between pixels, from 0 to 100. Set before or after comparing. */
+  let tolerance = $state(0);
+  let imageMode = $state<'diff' | 'split'>('diff');
 
   /**
    * The last file diff. Alongside `folderResult` only while `entry` is open,
@@ -49,6 +56,25 @@
     leftName: string;
     rightName: string;
   } | null>(null);
+  /**
+   * The last image comparison. Replaced whole on every tolerance change rather than
+   * edited, so it is not made deeply reactive: its diff image alone is a sizeable PNG.
+   */
+  let imageResult = $state.raw<{
+    diff: ImageDiffResult;
+    leftId: string;
+    rightId: string;
+    leftName: string;
+    rightName: string;
+  } | null>(null);
+  /** A new image diff for a moved tolerance slider is on its way. */
+  let imageBusy = $state(false);
+  /** The image comparison, while both panes still hold the images it was made from. */
+  const currentImage = $derived(
+    imageResult && left.docId === imageResult.leftId && right.docId === imageResult.rightId ? imageResult : null,
+  );
+  const hasImage = $derived(left.isImage || right.isImage);
+
   /** The file from the folder comparison whose diff is on screen, over the tree. */
   let entry = $state<{ node: TreeNode; binary: boolean } | null>(null);
   let tree: ReturnType<typeof FolderTree> | null = $state(null);
@@ -74,9 +100,10 @@
     const fromTree = a === entryLeft;
     if (!fromTree) {
       if (!canCompare) return;
-      // There is no meaningful diff of a file, or of nothing, against a folder.
-      if (a.isFolder !== b.isFolder) {
-        error = 'Drop a folder on both sides to compare folders';
+      // The panes already refuse a mismatched drop; this catches a side left empty.
+      const mismatch = kindMismatch(a, b);
+      if (mismatch) {
+        error = mismatch;
         return;
       }
       closeEntry();
@@ -86,7 +113,14 @@
     running = true;
     error = '';
     try {
-      if (a.isFolder && b.isFolder) {
+      if (a.isImage && b.isImage) {
+        const [leftId, rightId] = [a.docId!, b.docId!];
+        const next = await window.comparer.diffImages(leftId, rightId, tolerance);
+        if (token !== runToken) return;
+        imageResult = { diff: next, leftId, rightId, leftName: a.filename, rightName: b.filename };
+        result = null;
+        folderResult = null;
+      } else if (a.isFolder && b.isFolder) {
         progress = { phase: 'list', entries: 0 };
         // Folder panes always hold a service id; only a never-used file pane lacks one.
         const [leftId, rightId] = [a.docId!, b.docId!];
@@ -96,6 +130,7 @@
         if (token !== runToken) return;
         folderResult = { diff: next, leftId, rightId, leftName: a.filename, rightName: b.filename };
         result = null;
+        imageResult = null;
       } else {
         // Panes that were only read keep their text in the service, so nothing
         // crosses the boundary here; only an edited pane pushes its text back.
@@ -103,7 +138,10 @@
         const next = await window.comparer.diff(leftId, rightId);
         if (token !== runToken) return;
         result = next;
-        if (!fromTree) folderResult = null;
+        if (!fromTree) {
+          folderResult = null;
+          imageResult = null;
+        }
       }
       view = 'diff';
     } catch (cause) {
@@ -114,6 +152,7 @@
       } else {
         result = null;
         folderResult = null;
+        imageResult = null;
       }
     } finally {
       if (token === runToken) {
@@ -134,6 +173,45 @@
     running = false;
     progress = null;
     void window.comparer.cancelFolderDiff();
+  }
+
+  /** Why two panes cannot be compared, or null when they can. An empty pane counts as text. */
+  function kindMismatch(a: PaneState, b: PaneState): string | null {
+    if (a.kind === b.kind) return null;
+    if (a.isImage || b.isImage) return 'Drop an image on both sides to compare images';
+    return 'Drop a folder on both sides to compare folders';
+  }
+
+  function setTolerance(value: number) {
+    tolerance = value;
+    if (currentImage) void refreshImageDiff();
+  }
+
+  let imageRefreshing = false;
+
+  /**
+   * Brings the image comparison up to date with the tolerance slider. Only one request
+   * is ever in flight: moves made while it runs fold into the next one, so dragging the
+   * slider never queues a comparison for every step it passes.
+   */
+  async function refreshImageDiff() {
+    if (imageRefreshing) return;
+    imageRefreshing = true;
+    imageBusy = true;
+    try {
+      while (currentImage?.diff.kind === 'compared' && currentImage.diff.tolerance !== tolerance) {
+        const target = currentImage;
+        const next = await window.comparer.diffImages(target.leftId, target.rightId, tolerance);
+        // A new comparison, or a changed pane, replaced the one this was for.
+        if (imageResult !== target) break;
+        imageResult = { ...target, diff: next };
+      }
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : 'Could not update the image comparison';
+    } finally {
+      imageRefreshing = false;
+      imageBusy = false;
+    }
   }
 
   /** Opens a modified file from the folder tree and diffs its two versions. */
@@ -233,12 +311,34 @@
       class="[app-region:no-drag]"
     >
       <ToggleGroup.Item value="edit" aria-label="Show the editors">Editors</ToggleGroup.Item>
-      <ToggleGroup.Item value="diff" aria-label="Show the diff" disabled={!result && !folderResult}>
+      <ToggleGroup.Item value="diff" aria-label="Show the diff" disabled={!result && !folderResult && !currentImage}>
         Diff
       </ToggleGroup.Item>
     </ToggleGroup.Root>
 
-    {#if view === 'diff' && (result || folderResult)}
+    {#if view === 'diff' && currentImage && !folderResult}
+      <ToggleGroup.Root
+        type="single"
+        bind:value={
+          // Images of different sizes can only be shown side by side, which leaves the
+          // chosen mode alone for the next comparison.
+          () => (currentImage.diff.kind === 'sizeMismatch' ? 'split' : imageMode),
+          (next) => { if (next === 'diff' || next === 'split') imageMode = next; }
+        }
+        variant="outline"
+        size="sm"
+        class="[app-region:no-drag]"
+      >
+        <ToggleGroup.Item
+          value="diff"
+          aria-label="Show the differences"
+          disabled={currentImage.diff.kind === 'sizeMismatch'}
+        >
+          Diff
+        </ToggleGroup.Item>
+        <ToggleGroup.Item value="split" aria-label="Show both images side by side">Side by side</ToggleGroup.Item>
+      </ToggleGroup.Root>
+    {:else if view === 'diff' && (result || folderResult)}
       <ToggleGroup.Root
         type="single"
         bind:value={
@@ -283,6 +383,25 @@
           {Math.round(folderResult.diff.elapsedMs)} ms
         </span>
       </div>
+    {:else if currentImage}
+      {@const diff = currentImage.diff}
+      <div class="flex items-center gap-1.5">
+        {#if diff.kind === 'sizeMismatch'}
+          <Badge variant="secondary" class="bg-unknown-ink/15 text-unknown-ink border-0">Different sizes</Badge>
+        {:else if diff.identical}
+          <Badge variant="secondary" class="bg-add-bg text-add-ink border-0">Identical</Badge>
+        {:else}
+          <Badge
+            variant="secondary"
+            class="bg-del-bg text-del-ink border-0 tabular-nums"
+            title="{formatCount(diff.differentPixels)} of {formatCount(diff.totalPixels)} pixels differ"
+          >
+            {formatPercent(diff.percent)} different
+          </Badge>
+          <span class="text-muted-foreground text-[11px] tabular-nums">{formatCount(diff.differentPixels)} px</span>
+        {/if}
+        <span class="text-muted-foreground text-[11px] tabular-nums">{Math.round(diff.elapsedMs)} ms</span>
+      </div>
     {:else if result && !result.identical}
       <div class="flex items-center gap-1.5">
         <Badge variant="secondary" class="bg-add-bg text-add-ink border-0 tabular-nums">
@@ -301,8 +420,24 @@
     {/if}
 
     <div class="ml-auto flex items-center gap-3 [app-region:no-drag]">
-      <!-- A tree has no long lines to wrap, but it can hide what did not change. -->
-      {#if view === 'diff' && folderResult && !entry}
+      <!-- Images have no lines to wrap, but a tolerance to set — before comparing, or
+           after, when the diff follows the slider. A tree can hide what did not change. -->
+      {#if (view === 'edit' && hasImage) || (view === 'diff' && currentImage && !folderResult)}
+        <div class="text-muted-foreground flex items-center gap-2 text-xs">
+          <span>Tolerance</span>
+          <Slider
+            type="single"
+            min={0}
+            max={100}
+            step={0.5}
+            value={tolerance}
+            onValueChange={setTolerance}
+            class="w-28"
+            aria-label="Pixel tolerance"
+          />
+          <span class="w-7 text-right tabular-nums">{tolerance}</span>
+        </div>
+      {:else if view === 'diff' && folderResult && !entry}
         <label class="text-muted-foreground flex items-center gap-2 text-xs">
           <Switch bind:checked={hideUnchanged} aria-label="Hide unchanged entries" />
           Hide unchanged
@@ -392,6 +527,16 @@
           </div>
         </div>
       {/if}
+    {:else if view === 'diff' && currentImage}
+      <ImageDiffView
+        result={currentImage.diff}
+        leftUrl={left.imageUrl}
+        rightUrl={right.imageUrl}
+        leftName={currentImage.leftName}
+        rightName={currentImage.rightName}
+        mode={imageMode}
+        busy={imageBusy}
+      />
     {:else if view === 'diff' && result}
       <DiffView {result} mode={diffMode} {wrap} />
     {:else}

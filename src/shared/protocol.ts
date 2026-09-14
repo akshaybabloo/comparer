@@ -1,12 +1,13 @@
-import type { DiffResult, FolderDiffResult, FolderProgress } from '../lib/diff-types';
+import type { DiffResult, FolderDiffResult, FolderProgress, ImageDiffResult } from '../lib/diff-types';
 
 /**
  * The contract between the renderer, the main process and the diff service.
  *
- * Deliberately narrow: the renderer can open a file or folder the user dropped or
- * picked, read a slice of a document it has opened, and diff two documents or two
- * folders. There is no general "read this file" call, because that would hand any
- * code running in the renderer the ability to read the whole filesystem.
+ * Deliberately narrow: the renderer can open a file, image or folder the user dropped
+ * or picked, read a slice of a document or the bytes of an image it has opened, and
+ * diff two documents, two images or two folders. There is no general "read this file"
+ * call, because that would hand any code running in the renderer the ability to read
+ * the whole filesystem.
  */
 
 /** Identifies a document held by the service. Opaque to the renderer. */
@@ -32,8 +33,25 @@ export type FolderInfo = {
   path: string;
 };
 
-/** What opening a path produces: a document for a file, or a folder. */
-export type OpenedInfo = DocumentInfo | FolderInfo;
+/**
+ * An image the user dropped or picked, recognised by its contents rather than its
+ * name. Its bytes stay in the service; the renderer reads them to preview it.
+ */
+export type ImageInfo = {
+  kind: 'image';
+  id: DocumentId;
+  name: string;
+  /** Absolute path on disk. */
+  path: string;
+  /** Bytes on disk. */
+  size: number;
+};
+
+/** What opening a path produces: a text document, an image, or a folder. */
+export type OpenedInfo = DocumentInfo | ImageInfo | FolderInfo;
+
+/** What a native file picker offers: any file, or only the image formats that can be compared. */
+export type PickKind = 'file' | 'image';
 
 /**
  * One entry of a folder comparison, opened on both sides so it can be diffed
@@ -62,6 +80,8 @@ export type ServiceRequest =
   | { type: 'diff'; id: number; left: DocumentId | null; right: DocumentId | null; context: number; maxRows: number }
   | { type: 'diffFolders'; id: number; left: DocumentId; right: DocumentId }
   | { type: 'openFolderEntry'; id: number; left: DocumentId; right: DocumentId; path: string }
+  | { type: 'readImage'; id: number; docId: DocumentId }
+  | { type: 'diffImages'; id: number; left: DocumentId; right: DocumentId; tolerance: number }
   /** Stops the in-flight request with id `target`, which then fails as cancelled. */
   | { type: 'cancel'; id: number; target: number }
   | { type: 'close'; id: number; docId: DocumentId };
@@ -85,8 +105,8 @@ export type ServiceResponse =
 export type ComparerBridge = {
   /** Resolves a dropped File, which may be a folder, to its path and opens it in the service. */
   openDroppedFile: (file: File) => Promise<OpenedInfo>;
-  /** Shows the native file picker and opens the choice; null if cancelled. */
-  pickFile: () => Promise<OpenedInfo | null>;
+  /** Shows the native file picker, limited to images for `'image'`, and opens the choice; null if cancelled. */
+  pickFile: (kind?: PickKind) => Promise<OpenedInfo | null>;
   /** Shows the native folder picker and opens the choice; null if cancelled. */
   pickFolder: () => Promise<OpenedInfo | null>;
   /** Replaces a document's contents with text the user typed or edited. */
@@ -109,6 +129,13 @@ export type ComparerBridge = {
    * inside both opened folders. Only paths that stay inside those folders open.
    */
   openFolderEntry: (left: DocumentId, right: DocumentId, path: string) => Promise<FolderEntryDocuments>;
+  /** The bytes of an opened image, for previewing it. */
+  readImage: (docId: DocumentId) => Promise<Uint8Array>;
+  /**
+   * Compares two opened images. Both are decoded once and kept, so calling this again
+   * with another tolerance only re-runs the comparison.
+   */
+  diffImages: (left: DocumentId, right: DocumentId, tolerance: number) => Promise<ImageDiffResult>;
   close: (docId: DocumentId) => Promise<void>;
 };
 
