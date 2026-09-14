@@ -13,11 +13,11 @@ import { defineConfig } from 'vite';
  * the built file and needs no node_modules beside it once packaged.
  */
 export default defineConfig({
-  build: {
-    lib: {
-      entry: 'src/services/diff-service.ts',
-      formats: ['es'],
-      fileName: () => 'diff-service.mjs',
-    },
-  },
+	build: {
+		lib: {
+			entry: 'src/services/diff-service.ts',
+			formats: ['es'],
+			fileName: () => 'diff-service.mjs'
+		}
+	}
 });

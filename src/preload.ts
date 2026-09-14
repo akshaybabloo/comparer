@@ -1,12 +1,12 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 import type {
-  Chunk,
-  ComparerBridge,
-  DocumentId,
-  DocumentInfo,
-  FolderEntryDocuments,
-  OpenedInfo,
-  PickKind,
+	Chunk,
+	ComparerBridge,
+	DocumentId,
+	DocumentInfo,
+	FolderEntryDocuments,
+	OpenedInfo,
+	PickKind
 } from './shared/protocol';
 import type { DiffResult, FolderDiffResult, FolderProgress, ImageDiffResult } from './lib/diff-types';
 
@@ -20,12 +20,12 @@ let nextFolderDiffToken = 1;
  * someone using the app.
  */
 async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
-  try {
-    return await ipcRenderer.invoke(channel, ...args);
-  } catch (error) {
-    if (!(error instanceof Error)) throw error;
-    throw new Error(error.message.replace(/^Error invoking remote method '[^']*': (?:\w*Error: )?/, ''));
-  }
+	try {
+		return await ipcRenderer.invoke(channel, ...args);
+	} catch (error) {
+		if (!(error instanceof Error)) throw error;
+		throw new Error(error.message.replace(/^Error invoking remote method '[^']*': (?:\w*Error: )?/, ''));
+	}
 }
 
 /**
@@ -40,60 +40,60 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
  * Electron used to add, and is only reachable from a preload.
  */
 const bridge: ComparerBridge = {
-  // A dropped folder arrives as a File too, and resolves to its path the same way.
-  openDroppedFile: async (file: File): Promise<OpenedInfo> => {
-    // Only a File that came from a real OS drop has a path behind it. Anything
-    // else — a synthetic File, or one from a source with no file backing it —
-    // returns an empty string here, so fall back to sending the contents
-    // rather than asking main to open "".
-    const path = webUtils.getPathForFile(file);
-    if (path) return invoke('comparer:open', path);
+	// A dropped folder arrives as a File too, and resolves to its path the same way.
+	openDroppedFile: async (file: File): Promise<OpenedInfo> => {
+		// Only a File that came from a real OS drop has a path behind it. Anything
+		// else — a synthetic File, or one from a source with no file backing it —
+		// returns an empty string here, so fall back to sending the contents
+		// rather than asking main to open "".
+		const path = webUtils.getPathForFile(file);
+		if (path) return invoke('comparer:open', path);
 
-    const text = await file.text();
-    return invoke('comparer:adopt', null, text, file.name || 'dropped file');
-  },
+		const text = await file.text();
+		return invoke('comparer:adopt', null, text, file.name || 'dropped file');
+	},
 
-  pickFile: (kind?: PickKind): Promise<OpenedInfo | null> => invoke('comparer:pick', kind),
+	pickFile: (kind?: PickKind): Promise<OpenedInfo | null> => invoke('comparer:pick', kind),
 
-  pickFolder: (): Promise<OpenedInfo | null> => invoke('comparer:pick-folder'),
+	pickFolder: (): Promise<OpenedInfo | null> => invoke('comparer:pick-folder'),
 
-  adoptText: (docId: DocumentId | null, text: string, name: string): Promise<DocumentInfo> =>
-    invoke('comparer:adopt', docId, text, name),
+	adoptText: (docId: DocumentId | null, text: string, name: string): Promise<DocumentInfo> =>
+		invoke('comparer:adopt', docId, text, name),
 
-  readChunk: (docId: DocumentId, from: number, maxBytes: number): Promise<Chunk> =>
-    invoke('comparer:chunk', docId, from, maxBytes),
+	readChunk: (docId: DocumentId, from: number, maxBytes: number): Promise<Chunk> =>
+		invoke('comparer:chunk', docId, from, maxBytes),
 
-  diff: (left: DocumentId | null, right: DocumentId | null): Promise<DiffResult> =>
-    invoke('comparer:diff', left, right),
+	diff: (left: DocumentId | null, right: DocumentId | null): Promise<DiffResult> =>
+		invoke('comparer:diff', left, right),
 
-  diffFolders: async (
-    left: DocumentId,
-    right: DocumentId,
-    onProgress?: (progress: FolderProgress) => void,
-  ): Promise<FolderDiffResult> => {
-    const token = nextFolderDiffToken++;
-    const listener = (_event: IpcRendererEvent, from: number, progress: FolderProgress) => {
-      if (from === token) onProgress?.(progress);
-    };
-    ipcRenderer.on('comparer:folder-progress', listener);
-    try {
-      return await invoke('comparer:diff-folders', left, right, token);
-    } finally {
-      ipcRenderer.removeListener('comparer:folder-progress', listener);
-    }
-  },
+	diffFolders: async (
+		left: DocumentId,
+		right: DocumentId,
+		onProgress?: (progress: FolderProgress) => void
+	): Promise<FolderDiffResult> => {
+		const token = nextFolderDiffToken++;
+		const listener = (_event: IpcRendererEvent, from: number, progress: FolderProgress) => {
+			if (from === token) onProgress?.(progress);
+		};
+		ipcRenderer.on('comparer:folder-progress', listener);
+		try {
+			return await invoke('comparer:diff-folders', left, right, token);
+		} finally {
+			ipcRenderer.removeListener('comparer:folder-progress', listener);
+		}
+	},
 
-  cancelFolderDiff: (): Promise<void> => invoke('comparer:cancel-folder-diff'),
+	cancelFolderDiff: (): Promise<void> => invoke('comparer:cancel-folder-diff'),
 
-  openFolderEntry: (left: DocumentId, right: DocumentId, path: string): Promise<FolderEntryDocuments> =>
-    invoke('comparer:open-folder-entry', left, right, path),
+	openFolderEntry: (left: DocumentId, right: DocumentId, path: string): Promise<FolderEntryDocuments> =>
+		invoke('comparer:open-folder-entry', left, right, path),
 
-  readImage: (docId: DocumentId): Promise<Uint8Array> => invoke('comparer:read-image', docId),
+	readImage: (docId: DocumentId): Promise<Uint8Array> => invoke('comparer:read-image', docId),
 
-  diffImages: (left: DocumentId, right: DocumentId, tolerance: number): Promise<ImageDiffResult> =>
-    invoke('comparer:diff-images', left, right, tolerance),
+	diffImages: (left: DocumentId, right: DocumentId, tolerance: number): Promise<ImageDiffResult> =>
+		invoke('comparer:diff-images', left, right, tolerance),
 
-  close: (docId: DocumentId): Promise<void> => invoke('comparer:close', docId),
+	close: (docId: DocumentId): Promise<void> => invoke('comparer:close', docId)
 };
 
 contextBridge.exposeInMainWorld('comparer', bridge);

@@ -11,7 +11,7 @@ export const MAX_ZOOM = 8;
 const FIT_PADDING_PX = 32;
 
 export function clampZoom(zoom: number): number {
-  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
+	return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
 }
 
 /**
@@ -20,20 +20,20 @@ export function clampZoom(zoom: number): number {
  * whole pane would only show blocks.
  */
 export function fitZoom(viewportWidth: number, viewportHeight: number, image: ImageSize | null): number {
-  if (!image || image.width === 0 || image.height === 0 || viewportWidth === 0 || viewportHeight === 0) return 1;
-  const fit = Math.min(
-    (viewportWidth - FIT_PADDING_PX) / image.width,
-    (viewportHeight - FIT_PADDING_PX) / image.height,
-  );
-  return clampZoom(Math.min(1, fit));
+	if (!image || image.width === 0 || image.height === 0 || viewportWidth === 0 || viewportHeight === 0) return 1;
+	const fit = Math.min(
+		(viewportWidth - FIT_PADDING_PX) / image.width,
+		(viewportHeight - FIT_PADDING_PX) / image.height
+	);
+	return clampZoom(Math.min(1, fit));
 }
 
 /** One step of Ctrl+scroll: about 10% per notch, in either direction. */
 export function wheelZoom(zoom: number, deltaY: number): number {
-  return clampZoom(zoom * Math.pow(1.1, -deltaY / 100));
+	return clampZoom(zoom * Math.pow(1.1, -deltaY / 100));
 }
 
 /** The larger of two sizes in each dimension, so both fit at the same scale. */
 export function largest(a: ImageSize, b: ImageSize): ImageSize {
-  return { width: Math.max(a.width, b.width), height: Math.max(a.height, b.height) };
+	return { width: Math.max(a.width, b.width), height: Math.max(a.height, b.height) };
 }

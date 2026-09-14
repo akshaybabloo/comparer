@@ -23,124 +23,124 @@ const STAT_BATCH = 64;
  * Only a root that cannot be listed at all fails the call.
  */
 export async function listFolder(
-  root: string,
-  signal: AbortSignal,
-  onEntries: (count: number) => void,
+	root: string,
+	signal: AbortSignal,
+	onEntries: (count: number) => void
 ): Promise<FsEntry[]> {
-  const entries: FsEntry[] = [];
-  // The root has no entry of its own, so a failure to list it has nowhere to be
-  // recorded and fails the whole listing instead.
-  const pending: Array<{ path: string; entry: FsEntry | null }> = [{ path: '', entry: null }];
-  let active = 0;
+	const entries: FsEntry[] = [];
+	// The root has no entry of its own, so a failure to list it has nowhere to be
+	// recorded and fails the whole listing instead.
+	const pending: Array<{ path: string; entry: FsEntry | null }> = [{ path: '', entry: null }];
+	let active = 0;
 
-  await new Promise<void>((resolve, reject) => {
-    let failed = false;
-    const fail = (error: unknown) => {
-      failed = true;
-      reject(error);
-    };
+	await new Promise<void>((resolve, reject) => {
+		let failed = false;
+		const fail = (error: unknown) => {
+			failed = true;
+			reject(error);
+		};
 
-    const pump = () => {
-      if (failed) return;
-      if (signal.aborted) return fail(signal.reason);
-      if (pending.length === 0 && active === 0) return resolve();
+		const pump = () => {
+			if (failed) return;
+			if (signal.aborted) return fail(signal.reason);
+			if (pending.length === 0 && active === 0) return resolve();
 
-      while (active < DIRECTORY_CONCURRENCY && pending.length > 0) {
-        const folder = pending.pop()!;
-        active++;
-        readFolder(root, folder.path, signal)
-          .then(
-            (children) => {
-              entries.push(...children);
-              onEntries(children.length);
-              for (const child of children) {
-                if (child.kind === 'dir' && !child.error) pending.push({ path: child.path, entry: child });
-              }
-            },
-            (error: unknown) => {
-              if (folder.entry && !signal.aborted) folder.entry.error = describe(error);
-              else fail(error);
-            },
-          )
-          .finally(() => {
-            active--;
-            pump();
-          });
-      }
-    };
+			while (active < DIRECTORY_CONCURRENCY && pending.length > 0) {
+				const folder = pending.pop()!;
+				active++;
+				readFolder(root, folder.path, signal)
+					.then(
+						(children) => {
+							entries.push(...children);
+							onEntries(children.length);
+							for (const child of children) {
+								if (child.kind === 'dir' && !child.error) pending.push({ path: child.path, entry: child });
+							}
+						},
+						(error: unknown) => {
+							if (folder.entry && !signal.aborted) folder.entry.error = describe(error);
+							else fail(error);
+						}
+					)
+					.finally(() => {
+						active--;
+						pump();
+					});
+			}
+		};
 
-    pump();
-  });
+		pump();
+	});
 
-  return entries;
+	return entries;
 }
 
 async function readFolder(root: string, path: string, signal: AbortSignal): Promise<FsEntry[]> {
-  const dirents = await readdir(join(root, path), { withFileTypes: true });
-  const children: FsEntry[] = [];
+	const dirents = await readdir(join(root, path), { withFileTypes: true });
+	const children: FsEntry[] = [];
 
-  for (let i = 0; i < dirents.length; i += STAT_BATCH) {
-    signal.throwIfAborted();
-    const batch = dirents.slice(i, i + STAT_BATCH);
-    children.push(
-      ...(await Promise.all(
-        batch.map((dirent) => describeEntry(root, path ? `${path}/${dirent.name}` : dirent.name, dirent)),
-      )),
-    );
-  }
+	for (let i = 0; i < dirents.length; i += STAT_BATCH) {
+		signal.throwIfAborted();
+		const batch = dirents.slice(i, i + STAT_BATCH);
+		children.push(
+			...(await Promise.all(
+				batch.map((dirent) => describeEntry(root, path ? `${path}/${dirent.name}` : dirent.name, dirent))
+			))
+		);
+	}
 
-  return children;
+	return children;
 }
 
 async function describeEntry(root: string, path: string, dirent: Dirent): Promise<FsEntry> {
-  const absolute = join(root, path);
-  let stats: BigIntStats;
-  try {
-    stats = await lstat(absolute, { bigint: true });
-  } catch (error) {
-    // Keep whatever the directory listing already said about the entry, so it
-    // still shows up in the tree with the right icon.
-    return {
-      path,
-      kind: kindOf(dirent),
-      size: 0,
-      mode: 0,
-      uid: 0,
-      gid: 0,
-      mtime_ns: '0',
-      error: describe(error),
-    };
-  }
+	const absolute = join(root, path);
+	let stats: BigIntStats;
+	try {
+		stats = await lstat(absolute, { bigint: true });
+	} catch (error) {
+		// Keep whatever the directory listing already said about the entry, so it
+		// still shows up in the tree with the right icon.
+		return {
+			path,
+			kind: kindOf(dirent),
+			size: 0,
+			mode: 0,
+			uid: 0,
+			gid: 0,
+			mtime_ns: '0',
+			error: describe(error)
+		};
+	}
 
-  const kind = kindOf(stats);
-  const entry: FsEntry = {
-    path,
-    kind,
-    size: Number(stats.size),
-    mode: Number(stats.mode),
-    uid: Number(stats.uid),
-    gid: Number(stats.gid),
-    mtime_ns: stats.mtimeNs.toString(),
-  };
+	const kind = kindOf(stats);
+	const entry: FsEntry = {
+		path,
+		kind,
+		size: Number(stats.size),
+		mode: Number(stats.mode),
+		uid: Number(stats.uid),
+		gid: Number(stats.gid),
+		mtime_ns: stats.mtimeNs.toString()
+	};
 
-  if (kind === 'symlink') {
-    try {
-      entry.link_target = await readlink(absolute);
-    } catch (error) {
-      entry.error = describe(error);
-    }
-  }
+	if (kind === 'symlink') {
+		try {
+			entry.link_target = await readlink(absolute);
+		} catch (error) {
+			entry.error = describe(error);
+		}
+	}
 
-  return entry;
+	return entry;
 }
 
 function kindOf(info: Pick<Dirent, 'isFile' | 'isDirectory' | 'isSymbolicLink'>): EntryKind {
-  if (info.isSymbolicLink()) return 'symlink';
-  if (info.isDirectory()) return 'dir';
-  if (info.isFile()) return 'file';
-  return 'other';
+	if (info.isSymbolicLink()) return 'symlink';
+	if (info.isDirectory()) return 'dir';
+	if (info.isFile()) return 'file';
+	return 'other';
 }
 
 export function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+	return error instanceof Error ? error.message : String(error);
 }
