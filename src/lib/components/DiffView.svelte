@@ -260,6 +260,48 @@
 		return out;
 	});
 
+	/** Lines of context left above a change the Up and Down buttons jump to. */
+	const JUMP_CONTEXT = 3 * LINE_HEIGHT;
+
+	function isJumpStop(item: (typeof rows)[number]): boolean {
+		if (item.kind === 'collapsed') return item.hidden === 'different';
+		return changeOf(item) !== null;
+	}
+
+	/**
+	 * Where each change block is scrolled to by a jump. A block is a run of
+	 * changed rows of any kind, so a deletion and the insertion replacing it are
+	 * one stop; with the Similar filter the hidden-differences rows are the stops.
+	 * Stops near the end clamp to the furthest scroll position and share it.
+	 */
+	const jumpStops = $derived.by(() => {
+		const maxScroll = Math.max(0, totalHeight - viewportHeight);
+		const out: number[] = [];
+		for (let i = 0; i < rows.length; i++) {
+			if (!isJumpStop(rows[i]) || (i > 0 && isJumpStop(rows[i - 1]))) continue;
+			const position = Math.min(maxScroll, Math.max(0, offsets[i] - JUMP_CONTEXT));
+			if (out.at(-1) !== position) out.push(position);
+		}
+		return out;
+	});
+
+	/** The stop a jump in `direction` lands on, or -1 when there is none that way. */
+	function jumpTarget(direction: 1 | -1): number {
+		return direction > 0
+			? jumpStops.findIndex((stop) => stop > scrollTop + 1)
+			: jumpStops.findLastIndex((stop) => stop < scrollTop - 1);
+	}
+
+	export function canJump(direction: 1 | -1): boolean {
+		return jumpTarget(direction) >= 0;
+	}
+
+	/** Scrolls to the previous (-1) or next (1) change. */
+	export function jump(direction: 1 | -1) {
+		const target = jumpTarget(direction);
+		if (target >= 0) viewport?.scrollTo({ top: jumpStops[target] });
+	}
+
 	function onScroll(event: Event) {
 		const el = event.currentTarget as HTMLElement;
 		scrollTop = el.scrollTop;
