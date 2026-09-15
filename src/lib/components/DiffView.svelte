@@ -10,8 +10,10 @@
 		renderSegments,
 		sliceByColumns,
 		TAB_SIZE,
+		filterRows,
 		toSplitRows,
 		toUnifiedRows,
+		type DiffFilter,
 		type RenderedPart
 	} from '$lib/diff-view-model';
 
@@ -20,9 +22,11 @@
 		mode: 'unified' | 'split';
 		/** Wrap long lines instead of scrolling them horizontally. */
 		wrap: boolean;
+		/** Which lines to show; hidden runs collapse into a line saying how many were left out. */
+		show?: DiffFilter;
 	};
 
-	let { result, mode, wrap }: Props = $props();
+	let { result, mode, wrap, show = 'all' }: Props = $props();
 
 	/** Height of a single (unwrapped) line, matching `leading-5`. */
 	const LINE_HEIGHT = 20;
@@ -32,7 +36,7 @@
 	const UNIFIED_GUTTER_PX = 14 * 4 + 14 * 4 + 16;
 	const SPLIT_GUTTER_PX = 14 * 4;
 
-	const rows = $derived(mode === 'split' ? toSplitRows(result.hunks) : toUnifiedRows(result.hunks));
+	const rows = $derived(filterRows(mode === 'split' ? toSplitRows(result.hunks) : toUnifiedRows(result.hunks), show));
 
 	let viewport: HTMLElement | null = $state(null);
 	let scrollTop = $state(0);
@@ -206,6 +210,7 @@
 	$effect(() => {
 		void result;
 		void mode;
+		void show;
 		if (viewport) {
 			viewport.scrollTop = 0;
 			viewport.scrollLeft = 0;
@@ -386,7 +391,9 @@
 							>
 								<span class="h-px flex-1 bg-current opacity-20"></span>
 								<span class="text-[11px] tabular-nums"
-									>{formatCount(item.count)} unchanged {item.count === 1 ? 'line' : 'lines'}</span
+									>{formatCount(item.count)}
+									{item.hidden === 'similar' ? 'similar' : 'different'}
+									{item.count === 1 ? 'line' : 'lines'} hidden</span
 								>
 								<span class="h-px flex-1 bg-current opacity-20"></span>
 							</div>

@@ -1,8 +1,11 @@
 import type { DiffHunk, DiffRow } from './diff-types';
 
 export type VisualRow =
-	/** Stands in for equal lines omitted between two hunks. */
-	| { kind: 'collapsed'; key: string; count: number }
+	/**
+	 * Stands in for lines left out: equal lines omitted between two hunks, or
+	 * lines hidden by the Show filter. `hidden` says which kind they were.
+	 */
+	| { kind: 'collapsed'; key: string; count: number; hidden: 'similar' | 'different' }
 	/** Unified: one source line. */
 	| { kind: 'row'; key: string; row: DiffRow }
 	/** Split: the same line on both sides, either of which may be absent. */
@@ -117,7 +120,7 @@ export function toUnifiedRows(hunks: DiffHunk[]): VisualRow[] {
 	const out: VisualRow[] = [];
 	hunks.forEach((hunk, hunkIndex) => {
 		if (hunk.collapsedBefore > 0) {
-			out.push({ kind: 'collapsed', key: `c${hunkIndex}`, count: hunk.collapsedBefore });
+			out.push({ kind: 'collapsed', key: `c${hunkIndex}`, count: hunk.collapsedBefore, hidden: 'similar' });
 		}
 		hunk.rows.forEach((row, rowIndex) => {
 			out.push({ kind: 'row', key: `${hunkIndex}:${rowIndex}`, row });
@@ -136,7 +139,7 @@ export function toSplitRows(hunks: DiffHunk[]): VisualRow[] {
 
 	hunks.forEach((hunk, hunkIndex) => {
 		if (hunk.collapsedBefore > 0) {
-			out.push({ kind: 'collapsed', key: `c${hunkIndex}`, count: hunk.collapsedBefore });
+			out.push({ kind: 'collapsed', key: `c${hunkIndex}`, count: hunk.collapsedBefore, hidden: 'similar' });
 		}
 
 		const rows = hunk.rows;
@@ -175,6 +178,55 @@ export function toSplitRows(hunks: DiffHunk[]): VisualRow[] {
 			}
 		}
 	});
+
+	return out;
+}
+
+/** Which lines the diff shows: everything, only the lines both sides share, or only the changes. */
+export type DiffFilter = 'all' | 'similar' | 'different';
+
+/**
+ * How many source lines a row stands for. An equal line is one line shown on
+ * both sides; a changed pair counts each side that changed.
+ */
+function lineCount(item: VisualRow): number {
+	if (item.kind === 'collapsed') return item.count;
+	if (item.kind === 'row') return 1;
+	if (item.left?.tag === 'equal') return 1;
+	return (item.left ? 1 : 0) + (item.right ? 1 : 0);
+}
+
+function isSimilar(item: VisualRow): boolean {
+	if (item.kind === 'collapsed') return item.hidden === 'similar';
+	if (item.kind === 'row') return item.row.tag === 'equal';
+	return item.left?.tag === 'equal';
+}
+
+/**
+ * Drops the rows the filter hides. Each run of hidden rows becomes one
+ * collapsed row saying how many lines it left out, so the reader can see where
+ * something was skipped.
+ */
+export function filterRows(rows: VisualRow[], filter: DiffFilter): VisualRow[] {
+	if (filter === 'all') return rows;
+	const keepSimilar = filter === 'similar';
+	const hidden = keepSimilar ? 'different' : 'similar';
+	const out: VisualRow[] = [];
+	let run: Extract<VisualRow, { kind: 'collapsed' }> | null = null;
+
+	for (const item of rows) {
+		if (isSimilar(item) === keepSimilar) {
+			run = null;
+			out.push(item);
+			continue;
+		}
+		if (run) {
+			run.count += lineCount(item);
+		} else {
+			run = { kind: 'collapsed', key: `h${item.key}`, count: lineCount(item), hidden };
+			out.push(run);
+		}
+	}
 
 	return out;
 }

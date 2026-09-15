@@ -9,6 +9,7 @@
 	import FolderTree from '$lib/components/FolderTree.svelte';
 	import ImageDiffView from '$lib/components/ImageDiffView.svelte';
 	import type { DiffResult, FolderDiffResult, FolderProgress, ImageDiffResult } from '$lib/diff-types';
+	import type { DiffFilter } from '$lib/diff-view-model';
 	import { EditorSync } from '$lib/editor-sync.svelte';
 	import { changeSummary } from '$lib/folder-tree-model';
 	import { formatBytes, formatCount, formatPercent } from '$lib/format';
@@ -59,6 +60,8 @@
 	let diffMode = $state<'unified' | 'split'>('unified');
 	/** Folders open side by side; kept apart from `diffMode` so each remembers its own choice. */
 	let folderMode = $state<'unified' | 'split'>('split');
+	/** Which lines a text diff shows; kept across comparisons. */
+	let diffFilter = $state<DiffFilter>('all');
 	let wrap = $state(true);
 	let hideUnchanged = $state(false);
 	/** Colour difference to tolerate between pixels, from 0 to 100. Set before or after comparing. */
@@ -320,6 +323,15 @@
 		else diffMode = next;
 	}
 
+	function getDiffFilter() {
+		return diffFilter;
+	}
+
+	/** Clicking the pressed item would leave nothing selected, so an empty value is ignored. */
+	function setDiffFilter(next: string) {
+		if (next === 'all' || next === 'similar' || next === 'different') diffFilter = next;
+	}
+
 	/**
 	 * A file dropped anywhere outside a pane would otherwise make the window
 	 * navigate to it, replacing the app with the raw file — which reads as the
@@ -403,6 +415,17 @@
 				<ToggleGroup.Item value="unified" aria-label="Unified diff">Unified</ToggleGroup.Item>
 				<ToggleGroup.Item value="split" aria-label="Side by side diff">Split</ToggleGroup.Item>
 			</ToggleGroup.Root>
+		{/if}
+
+		{#if view === 'diff' && result && !result.identical && !currentImage && (!folderResult || entry)}
+			<div class="flex items-center gap-2 [app-region:no-drag]">
+				<span class="text-xs text-muted-foreground">Show</span>
+				<ToggleGroup.Root type="single" bind:value={getDiffFilter, setDiffFilter} variant="outline" size="sm">
+					<ToggleGroup.Item value="all" aria-label="Show every line">All</ToggleGroup.Item>
+					<ToggleGroup.Item value="similar" aria-label="Show only lines both sides share">Similar</ToggleGroup.Item>
+					<ToggleGroup.Item value="different" aria-label="Show only lines that differ">Different</ToggleGroup.Item>
+				</ToggleGroup.Root>
+			</div>
 		{/if}
 
 		{#if folderResult && !entry && !folderResult.diff.identical}
@@ -575,7 +598,7 @@
 								</div>
 							</div>
 						{:else if result}
-							<DiffView {result} mode={diffMode} {wrap} />
+							<DiffView {result} mode={diffMode} {wrap} show={diffFilter} />
 						{/if}
 					</div>
 				</div>
@@ -591,7 +614,7 @@
 				busy={imageBusy}
 			/>
 		{:else if view === 'diff' && result}
-			<DiffView {result} mode={diffMode} {wrap} />
+			<DiffView {result} mode={diffMode} {wrap} show={diffFilter} />
 		{:else}
 			<div class="flex h-full">
 				<Editor pane={left} side="left" sync={editorSync} placeholder="Drop the original file or folder here" {wrap} />
