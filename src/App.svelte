@@ -16,6 +16,8 @@
 	import { PaneState } from '$lib/panes.svelte';
 	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
 	import ArrowLeftRightIcon from '@lucide/svelte/icons/arrow-left-right';
+	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
+	import ChevronUpIcon from '@lucide/svelte/icons/chevron-up';
 	import GitCompareIcon from '@lucide/svelte/icons/git-compare';
 	import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
 	import type { TreeNode } from 'comparer-ts';
@@ -62,6 +64,8 @@
 	let folderMode = $state<'unified' | 'split'>('split');
 	/** Which lines a text diff shows; kept across comparisons. */
 	let diffFilter = $state<DiffFilter>('all');
+	/** The text diff on screen, for jumping between its changes. */
+	let diffView = $state<ReturnType<typeof DiffView>>();
 	let wrap = $state(true);
 	let hideUnchanged = $state(false);
 	/** Colour difference to tolerate between pixels, from 0 to 100. Set before or after comparing. */
@@ -426,6 +430,34 @@
 					<ToggleGroup.Item value="different" aria-label="Show only lines that differ">Different</ToggleGroup.Item>
 				</ToggleGroup.Root>
 			</div>
+
+			<div class="flex items-center gap-2 [app-region:no-drag]">
+				<span class="text-xs text-muted-foreground">Jump</span>
+				<div class="flex">
+					<Button
+						variant="outline"
+						size="sm"
+						class="rounded-r-none"
+						disabled={!diffView?.canJump(-1)}
+						onclick={() => diffView?.jump(-1)}
+						title="Previous difference"
+					>
+						<ChevronUpIcon class="size-3.5" />
+						Up
+					</Button>
+					<Button
+						variant="outline"
+						size="sm"
+						class="-ml-px rounded-l-none"
+						disabled={!diffView?.canJump(1)}
+						onclick={() => diffView?.jump(1)}
+						title="Next difference"
+					>
+						<ChevronDownIcon class="size-3.5" />
+						Down
+					</Button>
+				</div>
+			</div>
 		{/if}
 
 		{#if folderResult && !entry && !folderResult.diff.identical}
@@ -598,7 +630,7 @@
 								</div>
 							</div>
 						{:else if result}
-							<DiffView {result} mode={diffMode} {wrap} show={diffFilter} />
+							<DiffView bind:this={diffView} {result} mode={diffMode} {wrap} show={diffFilter} />
 						{/if}
 					</div>
 				</div>
@@ -614,7 +646,7 @@
 				busy={imageBusy}
 			/>
 		{:else if view === 'diff' && result}
-			<DiffView {result} mode={diffMode} {wrap} show={diffFilter} />
+			<DiffView bind:this={diffView} {result} mode={diffMode} {wrap} show={diffFilter} />
 		{:else}
 			<div class="flex h-full">
 				<Editor pane={left} side="left" sync={editorSync} placeholder="Drop the original file or folder here" {wrap} />
