@@ -1,0 +1,101 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['*.*.*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  installers:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            arch: x64
+          - name: windows-arm64
+            os: windows-latest
+            arch: arm64
+          - name: linux-x64
+            os: ubuntu-latest
+            arch: x64
+          - name: linux-arm64
+            os: ubuntu-latest
+            arch: arm64
+          - name: macos-arm64
+            os: macos-latest
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: true
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Install Linux packaging tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y fakeroot rpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Make installers
+        run: pnpm exec electron-forge make --arch=${{ matrix.arch }}
+
+      - name: Collect installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob globstar
+          version=$(node -p "require('./package.json').version")
+          mkdir -p dist
+          for file in out/make/**/*; do
+            [ -f "$file" ] || continue
+            case "$file" in
+              *.exe | *.deb | *.rpm | *.dmg | *.zip) ;;
+              *) continue ;;
+            esac
+            cp "$file" "dist/comparer-${version}-${{ matrix.name }}.${file##*.}"
+          done
+          ls -l dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: comparer-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: installers
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: comparer-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          files: artifacts/*

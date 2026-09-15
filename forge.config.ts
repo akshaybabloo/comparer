@@ -1,18 +1,44 @@
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
+import { MakerDMG } from '@electron-forge/maker-dmg';
 import { MakerDeb } from '@electron-forge/maker-deb';
 import { MakerRpm } from '@electron-forge/maker-rpm';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 
+const HOMEPAGE = 'https://github.com/akshaybabloo/comparer';
+
+// Extensionless: packager appends `.ico` on Windows and `.icns` on macOS. Linux
+// packages take the PNG through their makers instead.
+const ICON = 'assets/icon';
+
+const LINUX_OPTIONS = {
+	icon: `${ICON}.png`,
+	homepage: HOMEPAGE,
+	categories: ['Development', 'Utility']
+};
+
 const config: ForgeConfig = {
 	packagerConfig: {
-		asar: true
+		asar: true,
+		icon: ICON,
+		appBundleId: 'com.gollahalli.comparer',
+		appCategoryType: 'public.app-category.developer-tools'
 	},
 	rebuildConfig: {},
-	makers: [new MakerSquirrel({}), new MakerZIP({}, ['darwin']), new MakerRpm({}), new MakerDeb({})],
+	makers: [
+		new MakerSquirrel({
+			setupIcon: `${ICON}.ico`,
+			// Shown in Add/Remove Programs, which only reads an icon over HTTP.
+			iconUrl: `${HOMEPAGE}/raw/main/${ICON}.ico`
+		}),
+		new MakerZIP({}, ['darwin']),
+		new MakerDMG({ icon: `${ICON}.icns` }, ['darwin']),
+		new MakerRpm({ options: { ...LINUX_OPTIONS, license: 'MIT' } }),
+		new MakerDeb({ options: LINUX_OPTIONS })
+	],
 	plugins: [
 		new VitePlugin({
 			// `build` can specify multiple entry builds, which can be Main process, Preload scripts, Worker process, etc.
