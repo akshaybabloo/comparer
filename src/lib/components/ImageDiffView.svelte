@@ -1,7 +1,8 @@
 <script lang="ts">
 	import ImageViewport from '$lib/components/ImageViewport.svelte';
 	import ZoomControl from '$lib/components/ZoomControl.svelte';
-	import type { ImageDiffResult, ImageSize } from '$lib/diff-types';
+	import { Slider } from '$lib/components/ui/slider';
+	import type { ImageDiffResult, ImageMode, ImageSize } from '$lib/diff-types';
 	import { formatCount } from '$lib/format';
 	import { clampZoom, fitZoom, largest } from '$lib/image-zoom';
 	import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
@@ -13,13 +14,21 @@
 		rightUrl: string | null;
 		leftName: string;
 		rightName: string;
-		/** The painted diff, or the two images side by side. */
-		mode: 'diff' | 'split';
+		/**
+		 * The painted diff, the two images side by side, the second faded over the first
+		 * (onion skin), or the second revealed over the first by a divider (swipe).
+		 */
+		mode: ImageMode;
 		/** A new diff is being computed for a changed tolerance; the current one stays up meanwhile. */
 		busy: boolean;
 	};
 
 	let { result, leftUrl, rightUrl, leftName, rightName, mode, busy }: Props = $props();
+
+	/** How opaque the right image is over the left in onion skin, in percent. */
+	let opacity = $state(50);
+	/** Where the swipe divider sits, as a fraction of the width. */
+	let swipe = $state(0.5);
 
 	/** The chosen scale, or null to fit. Shared by every image shown, so they line up. */
 	let zoom = $state<number | null>(null);
@@ -79,6 +88,27 @@
 				{result.size.width}×{result.size.height} · {formatCount(result.totalPixels)} pixels · tolerance {result.tolerance}
 			</span>
 		{/if}
+		{#if mode === 'onion' && !split}
+			<label class="flex shrink-0 items-center gap-2 text-muted-foreground">
+				<span class="truncate" title={leftName}>{leftName}</span>
+				<Slider
+					type="single"
+					min={0}
+					max={100}
+					step={1}
+					value={opacity}
+					onValueChange={(value) => (opacity = value)}
+					class="w-32"
+					aria-label="Opacity of {rightName}"
+				/>
+				<span class="truncate" title={rightName}>{rightName}</span>
+				<span class="w-9 text-right tabular-nums">{opacity}%</span>
+			</label>
+		{:else if mode === 'swipe' && !split}
+			<span class="shrink-0 text-muted-foreground">
+				{leftName} on the left, {rightName} on the right — drag the divider
+			</span>
+		{/if}
 		{#if busy}
 			<LoaderCircleIcon class="size-3.5 shrink-0 animate-spin text-brand" aria-label="Updating" />
 		{/if}
@@ -125,6 +155,21 @@
 					</div>
 				</div>
 			</div>
+		{:else if mode === 'onion' || mode === 'swipe'}
+			<ImageViewport
+				src={leftUrl}
+				alt={leftName}
+				size={sizes.left}
+				{scale}
+				onzoom={(next) => (zoom = next)}
+				bind:scrollLeft
+				bind:scrollTop
+				overlaySrc={rightUrl}
+				overlayAlt={rightName}
+				overlayOpacity={opacity / 100}
+				swipe={mode === 'swipe' ? swipe : null}
+				onswipe={(fraction) => (swipe = fraction)}
+			/>
 		{:else}
 			<ImageViewport
 				src={diffUrl}

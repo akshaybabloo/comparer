@@ -1,10 +1,22 @@
 import { app, BrowserWindow, dialog, ipcMain, session, type OpenDialogOptions, type WebContents } from 'electron';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import { serviceHost } from './service-host';
-import type { Chunk, DocumentId, DocumentInfo, FolderEntryDocuments, OpenedInfo, PickKind } from './shared/protocol';
+import { addRecent, launchPaths, parseRecent, type RecentComparison } from './shared/launch';
+import type {
+	Chunk,
+	DocumentId,
+	DocumentInfo,
+	FolderEntryDocuments,
+	LaunchItem,
+	OpenedInfo,
+	PickKind
+} from './shared/protocol';
 import type { DiffResult, FolderDiffResult, ImageDiffResult } from './lib/diff-types';
 import type { LineChunk } from './lib/line-alignment';
+import type { ExportLabels } from './lib/export';
+import type { LineRange } from './lib/text-edit';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -58,6 +70,58 @@ const DIFF_MAX_ROWS = 200_000;
  * the window stops the old one rather than leaving it hashing in the background.
  */
 const folderDiffs = new Map<number, AbortController>();
+
+/** The paths the app was started with, until the first window asks for them. */
+let pendingLaunchPaths = launchPaths(process.argv, {
+	packaged: app.isPackaged,
+	appPath: app.getAppPath(),
+	cwd: process.cwd()
+});
+/**
+ * Started to compare something, as `git difftool` does: the app then quits with its
+ * window, even on macOS, since the tool that started it waits for it to exit.
+ */
+const launchedWithPaths = pendingLaunchPaths.length > 0;
+
+/** Opens each path in the service, reporting a path that cannot be opened rather than failing them all. */
+function openPaths(paths: string[]): Promise<LaunchItem[]> {
+	return Promise.all(
+		paths.map(async (target): Promise<LaunchItem> => {
+			try {
+				return { path: target, opened: await serviceHost.send<OpenedInfo>({ type: 'open', path: target }) };
+			} catch (error) {
+				return { path: target, error: error instanceof Error ? error.message : String(error) };
+			}
+		})
+	);
+}
+
+const recentFile = () => path.join(app.getPath('userData'), 'recent-comparisons.json');
+
+async function readRecent(): Promise<RecentComparison[]> {
+	try {
+		return parseRecent(await readFile(recentFile(), 'utf8'));
+	} catch {
+		return [];
+	}
+}
+
+/** Writes run one after another, so two comparisons finishing together cannot lose one. */
+let recentWrites = Promise.resolve();
+
+function updateRecent(change: (list: RecentComparison[]) => RecentComparison[]): Promise<RecentComparison[]> {
+	const next = recentWrites.then(async () => {
+		const list = change(await readRecent());
+		await mkdir(path.dirname(recentFile()), { recursive: true });
+		await writeFile(recentFile(), JSON.stringify(list, null, '\t'));
+		return list;
+	});
+	recentWrites = next.then(
+		() => undefined,
+		() => undefined
+	);
+	return next;
+}
 
 // The dialog runs here rather than behind a renderer-supplied path, so the
 // only paths this can open are ones the user chose in it.
@@ -181,6 +245,112 @@ function registerIpc() {
 		}
 	);
 
+	ipcMain.handle(
+		'comparer:copy-lines',
+		(_event, target: DocumentId, source: DocumentId, into: LineRange, from: LineRange): Promise<DocumentInfo> => {
+			if (typeof target !== 'string' || typeof source !== 'string') throw new Error('Two documents are required');
+			return serviceHost.send<DocumentInfo>({ type: 'replaceLines', target, source, into, from });
+		}
+	);
+
+	// Writes only to the path the document was opened from, or to one the user picks here.
+	ipcMain.handle('comparer:save', async (event, docId: DocumentId, saveAs?: boolean): Promise<DocumentInfo | null> => {
+		if (typeof docId !== 'string') throw new Error('A document is required');
+		const info = await serviceHost.send<DocumentInfo>({ type: 'describe', docId });
+		let target = saveAs ? null : info.path;
+		if (!target) {
+			const owner = BrowserWindow.fromWebContents(event.sender);
+			const options = { title: 'Save file', defaultPath: info.path ?? info.name };
+			const { canceled, filePath } = owner
+				? await dialog.showSaveDialog(owner, options)
+				: await dialog.showSaveDialog(options);
+			if (canceled || !filePath) return null;
+			target = filePath;
+		}
+		return serviceHost.send<DocumentInfo>({ type: 'save', docId, path: target });
+	});
+
+	// The file to write is always one the user names in this dialog.
+	ipcMain.handle(
+		'comparer:export-diff',
+		async (event, left: DocumentId | null, right: DocumentId | null, labels: ExportLabels): Promise<string | null> => {
+			if (typeof labels?.left !== 'string' || typeof labels.right !== 'string') throw new Error('Labels are required');
+			const owner = BrowserWindow.fromWebContents(event.sender);
+			const stem = path.parse(path.basename(labels.right)).name || 'diff';
+			const options = {
+				title: 'Export diff',
+				defaultPath: `${stem}.patch`,
+				filters: [
+					{ name: 'Patch', extensions: ['patch', 'diff'] },
+					{ name: 'HTML report', extensions: ['html'] }
+				]
+			};
+			const { canceled, filePath } = owner
+				? await dialog.showSaveDialog(owner, options)
+				: await dialog.showSaveDialog(options);
+			if (canceled || !filePath) return null;
+			const format = /\.html?$/i.test(filePath) ? 'html' : 'patch';
+			await serviceHost.send<void>({ type: 'exportDiff', left, right, format, labels, path: filePath });
+			return filePath;
+		}
+	);
+
+	ipcMain.handle('comparer:launch-items', (): Promise<LaunchItem[]> => {
+		const paths = pendingLaunchPaths;
+		pendingLaunchPaths = [];
+		return openPaths(paths);
+	});
+
+	ipcMain.handle('comparer:recent', (): Promise<RecentComparison[]> => readRecent());
+
+	// Remembers paths the service already holds for these ids, never paths sent by the renderer.
+	ipcMain.handle(
+		'comparer:remember',
+		async (_event, left: DocumentId, right: DocumentId): Promise<RecentComparison[]> => {
+			if (typeof left !== 'string' || typeof right !== 'string') throw new Error('Two documents are required');
+			type Located = { kind: RecentComparison['kind']; path: string | null };
+			const [a, b] = await Promise.all([
+				serviceHost.send<Located>({ type: 'pathOf', docId: left }),
+				serviceHost.send<Located>({ type: 'pathOf', docId: right })
+			]);
+			if (!a.path || !b.path || a.kind !== b.kind) return readRecent();
+			const entry = { kind: a.kind, left: a.path, right: b.path, at: Date.now() };
+			return updateRecent((list) => addRecent(list, entry));
+		}
+	);
+
+	ipcMain.handle('comparer:open-recent', async (_event, id: string): Promise<LaunchItem[]> => {
+		const entry = (await readRecent()).find((item) => item.id === id);
+		if (!entry) throw new Error('That comparison is no longer in the recent list');
+		return openPaths([entry.left, entry.right]);
+	});
+
+	ipcMain.handle('comparer:forget-recent', (_event, id: string): Promise<RecentComparison[]> => {
+		if (typeof id !== 'string') throw new Error('A recent comparison is required');
+		return updateRecent((list) => list.filter((item) => item.id !== id));
+	});
+
+	ipcMain.handle('comparer:clear-recent', async (): Promise<void> => {
+		await updateRecent(() => []);
+	});
+
+	// Windows and Linux draw the window controls over the top-right of the page, where the
+	// laser border cannot reach, so their strip takes the border's colour instead. macOS
+	// keeps its traffic lights clear of the edge, so there is nothing to do there.
+	ipcMain.handle('comparer:set-laser', (event, on: boolean): void => {
+		if (process.platform === 'darwin') return;
+		BrowserWindow.fromWebContents(event.sender)?.setTitleBarOverlay({
+			color: on ? LASER_COLOR : TITLE_BAR_COLOR,
+			symbolColor: on ? LASER_SYMBOL_COLOR : TITLE_BAR_SYMBOL_COLOR,
+			height: TITLE_BAR_HEIGHT
+		});
+	});
+
+	ipcMain.handle('comparer:window-squared', (event): boolean => {
+		const owner = BrowserWindow.fromWebContents(event.sender);
+		return owner ? isSquared(owner) : false;
+	});
+
 	ipcMain.handle('comparer:close', (_event, docId: DocumentId): Promise<void> => {
 		return serviceHost.send<void>({ type: 'close', docId });
 	});
@@ -205,6 +375,12 @@ const TITLE_BAR_HEIGHT = 43;
 /** The dark `--card` and `--foreground` tokens, which the header is painted with. */
 const TITLE_BAR_COLOR = '#171717';
 const TITLE_BAR_SYMBOL_COLOR = '#fafafa';
+/** Tailwind's `yellow-400`, the laser border, and dark symbols that stay readable on it. */
+const LASER_COLOR = '#facc15';
+const LASER_SYMBOL_COLOR = '#171717';
+
+/** A maximised or full-screen window fills its area edge to edge, so its corners are square. */
+const isSquared = (window: BrowserWindow) => window.isMaximized() || window.isFullScreen();
 
 const createWindow = () => {
 	// Create the browser window.
@@ -245,6 +421,15 @@ const createWindow = () => {
 		});
 	}
 
+	// Tells the page when the corners turn square or round again, so the laser border follows them.
+	const sendSquared = () => {
+		if (!mainWindow.isDestroyed()) mainWindow.webContents.send('comparer:window-squared', isSquared(mainWindow));
+	};
+	mainWindow.on('maximize', sendSquared);
+	mainWindow.on('unmaximize', sendSquared);
+	mainWindow.on('enter-full-screen', sendSquared);
+	mainWindow.on('leave-full-screen', sendSquared);
+
 	// and load the index.html of the app.
 	if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
 		mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
@@ -252,7 +437,8 @@ const createWindow = () => {
 		mainWindow.loadFile(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`));
 	}
 
-	if (!app.isPackaged) {
+	// Not for end-to-end tests, where a DevTools window would be one more window to tell apart.
+	if (!app.isPackaged && !process.env.COMPARER_E2E) {
 		mainWindow.webContents.openDevTools();
 	}
 };
@@ -270,7 +456,7 @@ app.on('ready', () => {
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
-	if (process.platform !== 'darwin') {
+	if (process.platform !== 'darwin' || launchedWithPaths) {
 		app.quit();
 	}
 });

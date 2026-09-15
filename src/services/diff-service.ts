@@ -1,6 +1,6 @@
 import { compareFolders, createImagePair, generateDiff, type ImagePair } from 'comparer-ts';
 import { createReadStream } from 'node:fs';
-import { open as openHandle, readFile, realpath, stat } from 'node:fs/promises';
+import { open as openHandle, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join, sep } from 'node:path';
 import { toHunks, toRows } from '../lib/diff-hunks';
 import type { DiffResult, FolderDiffResult, FolderProgress, ImageDiffResult } from '../lib/diff-types';
@@ -16,6 +16,8 @@ import type {
 	ServiceResponse
 } from '../shared/protocol';
 import { chunksFromLines, trimLines, type LineChunk } from '../lib/line-alignment';
+import { toHtmlReport, toPatch, type ExportFormat, type ExportLabels } from '../lib/export';
+import { replaceLines, type LineRange } from '../lib/text-edit';
 import { describe, listFolder } from './folder-listing';
 
 /**
@@ -250,6 +252,44 @@ function adopt(docId: DocumentId | null, text: string, name: string): DocumentIn
 	return store(id, name, existing?.path ?? null, text, text.length);
 }
 
+function describeDocument(docId: DocumentId): DocumentInfo {
+	const document = get(docId);
+	return {
+		kind: 'file',
+		id: document.id,
+		name: document.name,
+		path: document.path,
+		size: document.size,
+		lineCount: document.lineStarts.length
+	};
+}
+
+/** Copies lines from one document over lines of another, keeping the target's name and path. */
+function copyLines(target: DocumentId, source: DocumentId, into: LineRange, from: LineRange): DocumentInfo {
+	const document = get(target);
+	const text = replaceLines(document.text, get(source).text, into, from);
+	return store(document.id, document.name, document.path, text, text.length);
+}
+
+/** Writes a document out. The path is its own or one the user chose in main's save dialog. */
+async function save(docId: DocumentId, path: string): Promise<DocumentInfo> {
+	const document = get(docId);
+	await writeFile(path, document.text, 'utf8');
+	return store(document.id, basename(path), path, document.text, document.text.length);
+}
+
+/** Writes the diff of two documents as a patch or an HTML report, to a path main had the user choose. */
+async function exportDiff(
+	left: DocumentId | null,
+	right: DocumentId | null,
+	format: ExportFormat,
+	labels: ExportLabels,
+	path: string
+): Promise<void> {
+	const rows = toRows(left ? get(left).text : '', right ? get(right).text : '');
+	await writeFile(path, format === 'html' ? toHtmlReport(rows, labels) : toPatch(rows, labels), 'utf8');
+}
+
 /**
  * Slices by byte offset rather than by line.
  *
@@ -381,6 +421,20 @@ async function handle(request: ServiceRequest): Promise<unknown> {
 		case 'cancel':
 			running.get(request.target)?.abort();
 			return null;
+		case 'replaceLines':
+			return copyLines(request.target, request.source, request.into, request.from);
+		case 'describe':
+			return describeDocument(request.docId);
+		case 'pathOf': {
+			const item = documents.get(request.docId) ?? folders.get(request.docId) ?? images.get(request.docId);
+			if (!item) throw new Error(`Unknown document ${request.docId}`);
+			const kind = folders.has(request.docId) ? 'folder' : images.has(request.docId) ? 'image' : 'file';
+			return { kind, path: item.path };
+		}
+		case 'exportDiff':
+			return exportDiff(request.left, request.right, request.format, request.labels, request.path);
+		case 'save':
+			return save(request.docId, request.path);
 		case 'readImage':
 			return getImage(request.docId).bytes;
 		case 'diffImages':

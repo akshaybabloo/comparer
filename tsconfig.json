@@ -20,5 +20,5 @@
 			"$lib/*": ["./src/lib/*"]
 		}
 	},
-	"include": ["src/**/*.ts", "src/**/*.svelte", "forge.env.d.ts", "*.config.ts", "*.config.js"]
+	"include": ["src/**/*.ts", "src/**/*.svelte", "e2e/**/*.ts", "forge.env.d.ts", "*.config.ts", "*.config.js"]
 }

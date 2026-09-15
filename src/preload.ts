@@ -5,11 +5,15 @@ import type {
 	DocumentId,
 	DocumentInfo,
 	FolderEntryDocuments,
+	LaunchItem,
 	OpenedInfo,
 	PickKind
 } from './shared/protocol';
 import type { DiffResult, FolderDiffResult, FolderProgress, ImageDiffResult } from './lib/diff-types';
 import type { LineChunk } from './lib/line-alignment';
+import type { ExportLabels } from './lib/export';
+import type { LineRange } from './lib/text-edit';
+import type { RecentComparison } from './shared/launch';
 
 /** Tags each folder comparison, so its progress is not mistaken for another's. */
 let nextFolderDiffToken = 1;
@@ -96,6 +100,39 @@ const bridge: ComparerBridge = {
 
 	diffImages: (left: DocumentId, right: DocumentId, tolerance: number): Promise<ImageDiffResult> =>
 		invoke('comparer:diff-images', left, right, tolerance),
+
+	copyLines: (target: DocumentId, source: DocumentId, into: LineRange, from: LineRange): Promise<DocumentInfo> =>
+		invoke('comparer:copy-lines', target, source, into, from),
+
+	save: (docId: DocumentId, saveAs?: boolean): Promise<DocumentInfo | null> => invoke('comparer:save', docId, saveAs),
+
+	exportDiff: (left: DocumentId | null, right: DocumentId | null, labels: ExportLabels): Promise<string | null> =>
+		invoke('comparer:export-diff', left, right, labels),
+
+	launchItems: (): Promise<LaunchItem[]> => invoke('comparer:launch-items'),
+
+	recentComparisons: (): Promise<RecentComparison[]> => invoke('comparer:recent'),
+
+	rememberComparison: (left: DocumentId, right: DocumentId): Promise<RecentComparison[]> =>
+		invoke('comparer:remember', left, right),
+
+	openRecent: (id: string): Promise<LaunchItem[]> => invoke('comparer:open-recent', id),
+
+	forgetRecent: (id: string): Promise<RecentComparison[]> => invoke('comparer:forget-recent', id),
+
+	clearRecent: (): Promise<void> => invoke('comparer:clear-recent'),
+
+	setLaser: (on: boolean): Promise<void> => invoke('comparer:set-laser', on),
+
+	platform: process.platform,
+
+	windowSquared: (): Promise<boolean> => invoke('comparer:window-squared'),
+
+	onWindowSquared: (listener: (squared: boolean) => void) => {
+		const handler = (_event: IpcRendererEvent, squared: boolean) => listener(squared);
+		ipcRenderer.on('comparer:window-squared', handler);
+		return () => ipcRenderer.removeListener('comparer:window-squared', handler);
+	},
 
 	close: (docId: DocumentId): Promise<void> => invoke('comparer:close', docId)
 };

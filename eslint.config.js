@@ -4,7 +4,7 @@ import prettier from 'eslint-config-prettier';
 import svelte from 'eslint-plugin-svelte';
 
 export default [
-	{ ignores: ['.vite/', 'out/', 'dist/'] },
+	{ ignores: ['.vite/', 'out/', 'dist/', 'test-results/', 'playwright-report/'] },
 	// typescript-eslint's recommended rules. Its base config hands every file to the TypeScript
 	// parser, so it comes before Svelte's, which takes `.svelte` files back for the Svelte parser.
 	// The plugin's types declare this as one config, though it is an array of them.
