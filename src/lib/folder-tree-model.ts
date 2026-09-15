@@ -33,14 +33,54 @@ export function initiallyExpanded(entries: TreeNode[]): Set<string> {
 	return expanded;
 }
 
-/** Flattens the open part of the tree, in display order. */
-export function visibleRows(entries: TreeNode[], expanded: ReadonlySet<string>, hideUnchanged: boolean): TreeRow[] {
+/** The changes the tree can be filtered to. Entries that could not be compared always show. */
+export type ShownChange = 'added' | 'modified' | 'deleted';
+
+export const ALL_CHANGES: ReadonlySet<ShownChange> = new Set<ShownChange>(['added', 'modified', 'deleted']);
+
+/** Whether a node's own status is one the filter shows. */
+function shownStatus(node: TreeNode, shown: ReadonlySet<ShownChange>): boolean {
+	if (node.status === 'unchanged') return false;
+	return node.status === 'unknown' || shown.has(node.status);
+}
+
+/**
+ * Whether a node, or anything inside it, has a change the filter shows. With
+ * every change shown this is `has_changes`; memoised per call through `cache`.
+ */
+function holdsShownChange(node: TreeNode, shown: ReadonlySet<ShownChange>, cache: Map<TreeNode, boolean>): boolean {
+	if (shown === ALL_CHANGES) return node.has_changes;
+	let found = cache.get(node);
+	if (found === undefined) {
+		found = shownStatus(node, shown) || node.children.some((child) => holdsShownChange(child, shown, cache));
+		cache.set(node, found);
+	}
+	return found;
+}
+
+/**
+ * Flattens the open part of the tree, in display order.
+ *
+ * A change the filter leaves out is dropped, unless it is a folder with a shown
+ * change inside. Unchanged entries stay, unless `hideUnchanged` is set and there
+ * is no shown change inside them.
+ */
+export function visibleRows(
+	entries: TreeNode[],
+	expanded: ReadonlySet<string>,
+	hideUnchanged: boolean,
+	shown: ReadonlySet<ShownChange> = ALL_CHANGES
+): TreeRow[] {
 	const rows: TreeRow[] = [];
+	const cache = new Map<TreeNode, boolean>();
 	const walk = (nodes: TreeNode[], depth: number) => {
 		for (const node of nodes) {
-			// `has_changes` covers the node and everything inside it, so a folder
-			// holding a single change survives the filter along with that change.
-			if (hideUnchanged && !node.has_changes) continue;
+			// A folder holding a single shown change survives either filter along with that change.
+			const keep =
+				node.status === 'unchanged'
+					? !hideUnchanged || holdsShownChange(node, shown, cache)
+					: holdsShownChange(node, shown, cache);
+			if (!keep) continue;
 			const expandable = node.children.length > 0;
 			const open = expandable && expanded.has(node.path);
 			rows.push({ node, depth, expandable, expanded: open });
@@ -135,4 +175,41 @@ export function describeNode(node: TreeNode): string {
 	if (node.error) lines.push(node.error);
 	if (canOpen(node)) lines.push('Double-click to compare');
 	return lines.join('\n');
+}
+
+/** Every node's position in the fully expanded tree, for ordering nodes that are not on screen. */
+export function treeOrder(entries: TreeNode[]): Map<string, number> {
+	const order = new Map<string, number>();
+	const walk = (nodes: TreeNode[]) => {
+		for (const node of nodes) {
+			order.set(node.path, order.size);
+			walk(node.children);
+		}
+	};
+	walk(entries);
+	return order;
+}
+
+/**
+ * The entries Jump Up / Down stop at, in display order: each change the filter
+ * shows. A modified folder is passed over for the changes inside it, and an
+ * added or deleted folder is one stop, since everything inside shares its status.
+ */
+export function jumpTargets(entries: TreeNode[], shown: ReadonlySet<ShownChange> = ALL_CHANGES): TreeNode[] {
+	const out: TreeNode[] = [];
+	const walk = (nodes: TreeNode[]) => {
+		for (const node of nodes) {
+			const folder = node.left_kind === 'dir' && node.right_kind === 'dir';
+			if (shownStatus(node, shown) && !(folder && node.status === 'modified')) out.push(node);
+			if (node.status !== 'added' && node.status !== 'deleted') walk(node.children);
+		}
+	};
+	walk(entries);
+	return out;
+}
+
+/** The folders that must be open for a node to be on screen: every folder above it. */
+export function ancestorPaths(path: string): string[] {
+	const parts = path.split('/');
+	return parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join('/'));
 }

@@ -1,6 +1,6 @@
 import type { ImageSize } from './diff-types';
 import { detectLanguage, languageById, LANGUAGES, PLAIN_TEXT, type Language } from './languages';
-import type { DocumentId, DocumentInfo, OpenedInfo, PickKind } from '../shared/protocol';
+import type { DocumentId, DocumentInfo, LaunchItem, OpenedInfo, PickKind } from '../shared/protocol';
 
 export type PaneKind = OpenedInfo['kind'];
 
@@ -65,6 +65,8 @@ export class PaneState {
 	dirty = $state(false);
 	/** Counts edits made in the editor, and nothing else, for work that should follow typing. */
 	revision = $state(0);
+	/** Changed since it was opened or last saved, by typing or by copying a change into it. */
+	unsaved = $state(false);
 
 	/** Object URL of the image's bytes, for its preview; null unless this is an image. */
 	imageUrl = $state<string | null>(null);
@@ -144,10 +146,24 @@ export class PaneState {
 	hold(info: DocumentInfo) {
 		const previous = this.docId;
 		this.#reset(info);
+		this.unsaved = false;
 		if (previous && previous !== info.id) void window.comparer.close(previous);
 		this.text = '';
 		this.loadedBytes = 0;
 		this.fullyLoaded = info.size === 0;
+	}
+
+	/**
+	 * Takes something main already opened, such as a path the app was started with, as if
+	 * it had been dropped here — so it is refused the same way if the other side holds a
+	 * different kind of thing.
+	 */
+	openItem(item: LaunchItem) {
+		if ('error' in item) {
+			this.error = `Could not open ${item.path}: ${item.error}`;
+			return Promise.resolve();
+		}
+		return this.#open(async () => item.opened, `Opening ${item.opened.name}…`, `Could not open ${item.path}`);
 	}
 
 	/** Opens a folder chosen in the native picker. Cancelling leaves the pane as it was. */
@@ -173,6 +189,7 @@ export class PaneState {
 			}
 			const previous = this.docId;
 			this.#reset(info);
+			this.unsaved = false;
 			if (previous && previous !== info.id) void window.comparer.close(previous);
 			this.#languagePinned = false;
 
@@ -234,6 +251,7 @@ export class PaneState {
 	setTextFromEditor(next: string) {
 		this.text = next;
 		this.revision++;
+		this.unsaved = true;
 		if (this.docId !== null || next.length > 0) this.dirty = true;
 		this.totalSize = next.length;
 		this.totalLines = countLines(next);
@@ -260,6 +278,35 @@ export class PaneState {
 			this.loadedBytes = this.text.length;
 		}
 		return info.id;
+	}
+
+	/**
+	 * Takes on new contents the service already holds for this document, such as after
+	 * a change was copied into it, and shows them from the top.
+	 */
+	async reload(info: DocumentInfo) {
+		this.#reset(info);
+		this.unsaved = true;
+		this.revision++;
+		const chunk = await window.comparer.readChunk(info.id, 0, CHUNK_BYTES);
+		this.text = chunk.text;
+		this.loadedBytes = chunk.to;
+		this.fullyLoaded = chunk.atEnd;
+	}
+
+	/**
+	 * Writes the document to its file, or to one chosen in a dialog when it has none or
+	 * `saveAs` is set. Resolves false if there was nothing to save or the dialog was cancelled.
+	 */
+	async save(saveAs = false): Promise<boolean> {
+		const id = await this.sync();
+		if (!id) return false;
+		const info = await window.comparer.save(id, saveAs);
+		if (!info) return false;
+		this.filename = info.name;
+		this.path = info.path;
+		this.unsaved = false;
+		return true;
 	}
 
 	pinLanguage(id: string) {
@@ -295,7 +342,8 @@ export class PaneState {
 			loadedBytes: pane.loadedBytes,
 			totalSize: pane.totalSize,
 			fullyLoaded: pane.fullyLoaded,
-			dirty: pane.dirty
+			dirty: pane.dirty,
+			unsaved: pane.unsaved
 		});
 		const restore = (pane: PaneState, { languagePinned, ...rest }: ReturnType<typeof snapshot>) => {
 			Object.assign(pane, rest);
@@ -325,6 +373,7 @@ export class PaneState {
 		this.totalSize = 0;
 		this.fullyLoaded = true;
 		this.dirty = false;
+		this.unsaved = false;
 		if (previous) void window.comparer.close(previous);
 	}
 }

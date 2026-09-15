@@ -1,5 +1,8 @@
 import type { DiffResult, FolderDiffResult, FolderProgress, ImageDiffResult } from '../lib/diff-types';
 import type { LineChunk } from '../lib/line-alignment';
+import type { ExportFormat, ExportLabels } from '../lib/export';
+import type { LineRange } from '../lib/text-edit';
+import type { RecentComparison } from './launch';
 
 /**
  * The contract between the renderer, the main process and the diff service.
@@ -51,6 +54,9 @@ export type ImageInfo = {
 /** What opening a path produces: a text document, an image, or a folder. */
 export type OpenedInfo = DocumentInfo | ImageInfo | FolderInfo;
 
+/** A path given on the command line or remembered from before, opened, or why it could not be. */
+export type LaunchItem = { path: string; opened: OpenedInfo } | { path: string; error: string };
+
 /** What a native file picker offers: any file, or only the image formats that can be compared. */
 export type PickKind = 'file' | 'image';
 
@@ -80,6 +86,19 @@ export type ServiceRequest =
 	| { type: 'diffFolders'; id: number; left: DocumentId; right: DocumentId }
 	| { type: 'openFolderEntry'; id: number; left: DocumentId; right: DocumentId; path: string }
 	| { type: 'lineChunks'; id: number; left: DocumentId; right: DocumentId }
+	| { type: 'replaceLines'; id: number; target: DocumentId; source: DocumentId; into: LineRange; from: LineRange }
+	| { type: 'describe'; id: number; docId: DocumentId }
+	| { type: 'pathOf'; id: number; docId: DocumentId }
+	| {
+			type: 'exportDiff';
+			id: number;
+			left: DocumentId | null;
+			right: DocumentId | null;
+			format: ExportFormat;
+			labels: ExportLabels;
+			path: string;
+	  }
+	| { type: 'save'; id: number; docId: DocumentId; path: string }
 	| { type: 'readImage'; id: number; docId: DocumentId }
 	| { type: 'diffImages'; id: number; left: DocumentId; right: DocumentId; tolerance: number }
 	/** Stops the in-flight request with id `target`, which then fails as cancelled. */
@@ -142,6 +161,43 @@ export type ComparerBridge = {
 	 * with another tolerance only re-runs the comparison.
 	 */
 	diffImages: (left: DocumentId, right: DocumentId, tolerance: number) => Promise<ImageDiffResult>;
+	/**
+	 * Replaces lines `into` of document `target` with lines `from` of document `source`,
+	 * for copying a change from one side of a diff to the other. Nothing is written to disk.
+	 */
+	copyLines: (target: DocumentId, source: DocumentId, into: LineRange, from: LineRange) => Promise<DocumentInfo>;
+	/**
+	 * Writes a document to the file it came from, or to one chosen in a save dialog when
+	 * it has none or `saveAs` is set. Null if the dialog was cancelled.
+	 */
+	save: (docId: DocumentId, saveAs?: boolean) => Promise<DocumentInfo | null>;
+	/**
+	 * Writes the diff of two documents to a file chosen in a save dialog: a unified
+	 * `.patch`, or an `.html` report. Resolves to where it was written, or null if cancelled.
+	 */
+	exportDiff: (left: DocumentId | null, right: DocumentId | null, labels: ExportLabels) => Promise<string | null>;
+	/** The paths the app was started with — `comparer left right` — opened. Only the first call gets them. */
+	launchItems: () => Promise<LaunchItem[]>;
+	/** Comparisons made before, newest first. */
+	recentComparisons: () => Promise<RecentComparison[]>;
+	/** Remembers two opened documents, images or folders as a recent comparison, if both came from disk. */
+	rememberComparison: (left: DocumentId, right: DocumentId) => Promise<RecentComparison[]>;
+	/** Opens both sides of a recent comparison again. */
+	openRecent: (id: string) => Promise<LaunchItem[]>;
+	/** Takes one comparison off the recent list, returning what is left. */
+	forgetRecent: (id: string) => Promise<RecentComparison[]>;
+	clearRecent: () => Promise<void>;
+	/**
+	 * Colours the strip the system draws the window controls in to match the laser border,
+	 * or back to the title bar's colour, where the platform lets the app choose it.
+	 */
+	setLaser: (on: boolean) => Promise<void>;
+	/** The operating system, as Node names it: `linux`, `darwin` or `win32`. */
+	platform: string;
+	/** Whether the window has square corners right now: maximised or full screen. */
+	windowSquared: () => Promise<boolean>;
+	/** Calls back whenever the window gains or loses square corners; returns a function that stops it. */
+	onWindowSquared: (listener: (squared: boolean) => void) => () => void;
 	close: (docId: DocumentId) => Promise<void>;
 };
 

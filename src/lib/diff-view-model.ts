@@ -1,4 +1,6 @@
 import type { DiffHunk, DiffRow } from './diff-types';
+import type { ChangeKind } from './line-alignment';
+import type { ChangeRange } from './text-edit';
 
 export type VisualRow =
 	/**
@@ -14,7 +16,13 @@ export type VisualRow =
 /** Must match the `tab-size` the rows are rendered with. */
 export const TAB_SIZE = 4;
 
-export type RenderedPart = { kind: 'text'; emphasized: boolean; value: string };
+export type RenderedPart = {
+	kind: 'text';
+	emphasized: boolean;
+	value: string;
+	/** Character offset of `value` within its row, so search matches can be placed on it. */
+	start: number;
+};
 
 export type RenderedLine = {
 	parts: RenderedPart[];
@@ -94,10 +102,12 @@ export function sliceByColumns(row: DiffRow, from: number, to: number): Rendered
 		if (end <= from) continue;
 		if (start >= to) break;
 
+		const sliceStart = Math.max(0, from - start);
 		parts.push({
 			kind: 'text',
 			emphasized: segment.emphasized,
-			value: segment.value.slice(Math.max(0, from - start), Math.min(segment.value.length, to - start))
+			value: segment.value.slice(sliceStart, Math.min(segment.value.length, to - start)),
+			start: start + sliceStart
 		});
 	}
 
@@ -106,12 +116,13 @@ export function sliceByColumns(row: DiffRow, from: number, to: number): Rendered
 
 /** Every segment of the row, in full — nothing is clipped or hidden. */
 export function renderSegments(row: DiffRow): RenderedLine {
+	let start = 0;
 	return {
-		parts: row.segments.map((segment) => ({
-			kind: 'text' as const,
-			emphasized: segment.emphasized,
-			value: segment.value
-		}))
+		parts: row.segments.map((segment) => {
+			const part = { kind: 'text' as const, emphasized: segment.emphasized, value: segment.value, start };
+			start += segment.value.length;
+			return part;
+		})
 	};
 }
 
@@ -229,4 +240,151 @@ export function filterRows(rows: VisualRow[], filter: DiffFilter): VisualRow[] {
 	}
 
 	return out;
+}
+
+/** How a row changed: an insertion, a deletion, or — side by side — a line replaced by another. */
+export function changeOf(item: VisualRow): ChangeKind | null {
+	if (item.kind === 'collapsed') return null;
+	if (item.kind === 'row') return item.row.tag === 'insert' ? 'add' : item.row.tag === 'delete' ? 'del' : null;
+	const removed = item.left?.tag === 'delete';
+	const added = item.right?.tag === 'insert';
+	return removed && added ? 'mod' : removed ? 'del' : added ? 'add' : null;
+}
+
+function isChangeRow(item: VisualRow): boolean {
+	if (item.kind === 'collapsed') return item.hidden === 'different';
+	return changeOf(item) !== null;
+}
+
+/**
+ * Index of the first row of each change. A change is a run of changed rows of
+ * any kind, so a deletion and the insertion replacing it are one change. With
+ * the Similar filter the rows standing in for hidden differences are the changes.
+ */
+export function changeStarts(rows: VisualRow[]): number[] {
+	const out: number[] = [];
+	for (let i = 0; i < rows.length; i++) {
+		if (isChangeRow(rows[i]) && (i === 0 || !isChangeRow(rows[i - 1]))) out.push(i);
+	}
+	return out;
+}
+
+/**
+ * One occurrence of the search text. `side` is the cell it is in: `row` in the
+ * unified view, `left` or `right` side by side, or `both` for an unchanged line,
+ * which shows the same text on each side and counts once.
+ */
+export type SearchMatch = { index: number; side: 'row' | 'left' | 'right' | 'both'; start: number; end: number };
+
+/** More matches than this are not worth counting one by one; the search stops there. */
+export const MAX_MATCHES = 10_000;
+
+const textCache = new WeakMap<DiffRow, string>();
+
+function rowText(row: DiffRow): string {
+	let text = textCache.get(row);
+	if (text === undefined) {
+		text = row.segments.map((segment) => segment.value).join('');
+		textCache.set(row, text);
+	}
+	return text;
+}
+
+/** Every case-insensitive occurrence of `query` in the rows, in reading order. */
+export function findMatches(rows: VisualRow[], query: string, limit = MAX_MATCHES): SearchMatch[] {
+	const out: SearchMatch[] = [];
+	if (!query) return out;
+	// Without the `u` flag, `i` folds case character by character, so match
+	// positions stay offsets into the original text.
+	const pattern = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+
+	const scan = (text: string, index: number, side: SearchMatch['side']) => {
+		pattern.lastIndex = 0;
+		for (let found = pattern.exec(text); found; found = pattern.exec(text)) {
+			if (out.length >= limit) return;
+			out.push({ index, side, start: found.index, end: found.index + found[0].length });
+		}
+	};
+
+	for (let index = 0; index < rows.length && out.length < limit; index++) {
+		const item = rows[index];
+		if (item.kind === 'collapsed') continue;
+		if (item.kind === 'row') {
+			scan(rowText(item.row), index, 'row');
+		} else if (item.left && item.left === item.right) {
+			scan(rowText(item.left), index, 'both');
+		} else {
+			if (item.left) scan(rowText(item.left), index, 'left');
+			if (item.right) scan(rowText(item.right), index, 'right');
+		}
+	}
+	return out;
+}
+
+/** A search match within one cell, in that row's character offsets. */
+export type Highlight = { start: number; end: number; active: boolean };
+
+export type HighlightedPart = { emphasized: boolean; value: string; match: 'none' | 'match' | 'active' };
+
+/** Splits rendered parts wherever a search match starts or ends, so matches can be drawn over them. */
+export function highlightParts(parts: RenderedPart[], highlights: Highlight[]): HighlightedPart[] {
+	if (highlights.length === 0) {
+		return parts.map((part) => ({ emphasized: part.emphasized, value: part.value, match: 'none' }));
+	}
+	const out: HighlightedPart[] = [];
+	for (const part of parts) {
+		const end = part.start + part.value.length;
+		let cursor = part.start;
+		for (const highlight of highlights) {
+			if (highlight.end <= cursor || highlight.start >= end) continue;
+			const from = Math.max(cursor, highlight.start);
+			const to = Math.min(end, highlight.end);
+			if (from > cursor) {
+				out.push({
+					emphasized: part.emphasized,
+					value: part.value.slice(cursor - part.start, from - part.start),
+					match: 'none'
+				});
+			}
+			out.push({
+				emphasized: part.emphasized,
+				value: part.value.slice(from - part.start, to - part.start),
+				match: highlight.active ? 'active' : 'match'
+			});
+			cursor = to;
+		}
+		if (cursor < end) {
+			out.push({ emphasized: part.emphasized, value: part.value.slice(cursor - part.start), match: 'none' });
+		}
+	}
+	return out;
+}
+
+/**
+ * The lines on each side taken up by the change containing `rows[at]`, where
+ * `rows` are every row of the diff in order. A side with nothing in the change
+ * gets an empty range at the point the other side's lines would go.
+ */
+export function changeRange(rows: DiffRow[], at: number): ChangeRange {
+	let start = at;
+	while (start > 0 && rows[start - 1].tag !== 'equal') start--;
+	let end = at;
+	while (end < rows.length && rows[end].tag !== 'equal') end++;
+
+	const block = rows.slice(start, end);
+	const deleted = block.filter((row) => row.tag === 'delete');
+	const inserted = block.filter((row) => row.tag === 'insert');
+	const before = rows[start - 1];
+	const after = rows[end];
+
+	// Line numbers are 1-based; ranges count lines from 0.
+	const position = (side: 'oldLine' | 'newLine', first: DiffRow | undefined) =>
+		first ? first[side]! - 1 : before ? before[side]! : after ? after[side]! - 1 : 0;
+
+	const leftFrom = position('oldLine', deleted[0]);
+	const rightFrom = position('newLine', inserted[0]);
+	return {
+		left: { from: leftFrom, to: leftFrom + deleted.length },
+		right: { from: rightFrom, to: rightFrom + inserted.length }
+	};
 }

@@ -50,6 +50,9 @@ export type FolderDiffResult = FolderDiff & {
 
 export type ImageSize = { width: number; height: number };
 
+/** How two images are shown: the painted diff, side by side, onion skin, or swipe. */
+export type ImageMode = 'diff' | 'split' | 'onion' | 'swipe';
+
 /**
  * Two images compared pixel by pixel, or found to be different sizes, which
  * cannot be compared pixel by pixel but can still be looked at side by side.

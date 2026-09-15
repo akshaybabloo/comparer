@@ -2,14 +2,19 @@
 	import ChangeStrip from '$lib/components/ChangeStrip.svelte';
 	import type { FolderDiffResult } from '$lib/diff-types';
 	import {
+		ALL_CHANGES,
+		ancestorPaths,
 		canOpen,
 		describeNode,
 		displayKind,
 		hasErrorOn,
 		initiallyExpanded,
+		jumpTargets,
 		kindChange,
 		STATUS_LETTER,
+		treeOrder,
 		visibleRows,
+		type ShownChange,
 		type TreeRow
 	} from '$lib/folder-tree-model';
 	import { formatCount } from '$lib/format';
@@ -23,6 +28,7 @@
 	import FolderOpenIcon from '@lucide/svelte/icons/folder-open';
 	import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
 	import type { ChangeStatus, EntryKind, TreeNode } from 'comparer-ts';
+	import { tick } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 
 	type Props = {
@@ -33,11 +39,13 @@
 		mode: 'unified' | 'split';
 		/** Drop entries with no change in or below them. */
 		hideUnchanged: boolean;
+		/** Which changes to list; a folder with a listed change inside stays too. */
+		shown?: ReadonlySet<ShownChange>;
 		/** A modified file was double-clicked, or Enter was pressed on it. */
 		onopen?: (node: TreeNode) => void;
 	};
 
-	let { result, leftName, rightName, mode, hideUnchanged, onopen }: Props = $props();
+	let { result, leftName, rightName, mode, hideUnchanged, shown = ALL_CHANGES, onopen }: Props = $props();
 
 	/** For returning keyboard focus to the tree, such as after closing an opened file. */
 	export function focus() {
@@ -58,7 +66,7 @@
 	const expanded = $derived(new SvelteSet(initiallyExpanded(result.entries)));
 	let selectedPath = $derived<string | null>(result && null);
 
-	const rows = $derived(visibleRows(result.entries, expanded, hideUnchanged));
+	const rows = $derived(visibleRows(result.entries, expanded, hideUnchanged, shown));
 	const selectedIndex = $derived(rows.findIndex((row) => row.node.path === selectedPath));
 	const total = $derived(
 		result.stats.added + result.stats.deleted + result.stats.modified + result.stats.unchanged + result.stats.unknown
@@ -133,6 +141,43 @@
 		}
 	}
 
+	/** Every entry's place in the whole tree, open or not, and the changes Jump stops at. */
+	const order = $derived(treeOrder(result.entries));
+	const targets = $derived(jumpTargets(result.entries, shown));
+
+	/** Where the selection sits in the whole tree; -1 with nothing selected. */
+	const selectedOrder = $derived(selectedPath === null ? -1 : (order.get(selectedPath) ?? -1));
+
+	/** The change a jump in `direction` lands on, or -1 when there is none that way. */
+	function jumpTarget(direction: 1 | -1): number {
+		if (direction > 0) return targets.findIndex((node) => order.get(node.path)! > selectedOrder);
+		return selectedOrder < 0 ? -1 : targets.findLastIndex((node) => order.get(node.path)! < selectedOrder);
+	}
+
+	export function canJump(direction: 1 | -1): boolean {
+		return jumpTarget(direction) >= 0;
+	}
+
+	/** Selects the previous (-1) or next (1) change, opening the folders above it. */
+	export async function jump(direction: 1 | -1) {
+		const target = targets[jumpTarget(direction)];
+		if (!target) return;
+		for (const path of ancestorPaths(target.path)) expanded.add(path);
+		// Let the list grow to include the opened folders before scrolling to the row.
+		selectedPath = target.path;
+		await tick();
+		select(rows.findIndex((row) => row.node.path === target.path));
+		viewport?.focus();
+	}
+
+	/** Which change is selected, counting from 1, and how many there are; 0 before the first. */
+	export function changeCount(): { current: number; total: number } {
+		return {
+			current: targets.findLastIndex((node) => order.get(node.path)! <= selectedOrder) + 1,
+			total: targets.length
+		};
+	}
+
 	function select(index: number) {
 		const row = rows[index];
 		if (!row) return;
@@ -158,7 +203,8 @@
 
 	/** Arrow keys follow the usual tree conventions, as in a file manager. */
 	function onKeydown(event: KeyboardEvent) {
-		if (rows.length === 0) return;
+		// Modified arrows belong to the app, such as Alt+↓ jumping to the next change.
+		if (rows.length === 0 || event.altKey || event.ctrlKey || event.metaKey) return;
 		const index = selectedIndex;
 		const row = rows[index];
 		const page = Math.max(1, Math.floor((viewportHeight - HEADER_HEIGHT) / ROW_HEIGHT) - 1);

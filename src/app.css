@@ -148,6 +148,27 @@
 	   focused one; unknown is amber, a warning rather than a change. */
 	--color-mod-ink: oklch(0.8 0.11 265);
 	--color-unknown-ink: oklch(0.84 0.13 80);
+
+	/* Search matches: amber, which no diff state uses, so a match inside an added
+	   or deleted line still reads as a match. The one being moved to is brighter
+	   and ringed. */
+	--color-search: oklch(0.55 0.11 85 / 0.55);
+	--color-search-active: oklch(0.68 0.15 75 / 0.85);
+	--color-search-active-ring: oklch(0.85 0.15 80);
+}
+
+/* The highlight over a change a jump has just landed on, fading out so it only draws the eye. */
+@keyframes jump-flash {
+	from {
+		opacity: 1;
+	}
+	to {
+		opacity: 0;
+	}
+}
+
+@utility animate-jump-flash {
+	animation: jump-flash 900ms ease-out forwards;
 }
 
 /* Behind images, so transparent pixels read as transparent rather than as the page. */

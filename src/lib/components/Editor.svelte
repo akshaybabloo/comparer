@@ -30,6 +30,7 @@
 	import FolderIcon from '@lucide/svelte/icons/folder';
 	import FolderOpenIcon from '@lucide/svelte/icons/folder-open';
 	import ImageIcon from '@lucide/svelte/icons/image';
+	import SaveIcon from '@lucide/svelte/icons/save';
 	import { tick, untrack } from 'svelte';
 	import XIcon from '@lucide/svelte/icons/x';
 
@@ -54,6 +55,15 @@
 	 * "fully loaded", silently ending the streaming of the rest of the file.
 	 */
 	const Programmatic = Annotation.define<boolean>();
+
+	/** Writes the pane to its file, or asks where when it has none or `saveAs` is set. */
+	async function save(saveAs = false) {
+		try {
+			await pane.save(saveAs);
+		} catch (error) {
+			pane.error = error instanceof Error ? error.message : 'Could not save the file';
+		}
+	}
 
 	const languageCompartment = new Compartment();
 	const editableCompartment = new Compartment();
@@ -237,7 +247,17 @@
 					highlightSelectionMatches(),
 					search({ top: true }),
 					indentUnit.of('  '),
-					keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+					keymap.of([
+						{
+							key: 'Mod-s',
+							shift: () => (void save(true), true),
+							run: () => (void save(), true),
+							preventDefault: true
+						},
+						...defaultKeymap,
+						...historyKeymap,
+						...searchKeymap
+					]),
 					languageCompartment.of([]),
 					editableCompartment.of([]),
 					wrapCompartment.of([]),
@@ -405,6 +425,9 @@
 		<span class="truncate text-xs font-medium" title={pane.filename || emptyPrompt}>
 			{pane.filename || emptyPrompt}
 		</span>
+		{#if pane.kind === 'file' && pane.unsaved}
+			<span class="size-1.5 shrink-0 rounded-full bg-brand" title="Unsaved changes" aria-label="Unsaved changes"></span>
+		{/if}
 
 		{#if pane.isFolder}
 			<span class="shrink-0 text-[11px] text-muted-foreground">Folder</span>
@@ -468,6 +491,19 @@
 						{/each}
 					</Select.Content>
 				</Select.Root>
+			{/if}
+
+			{#if pane.kind === 'file' && pane.unsaved}
+				<Button
+					variant="ghost"
+					size="icon"
+					class="size-7"
+					onclick={() => save()}
+					aria-label="Save this file"
+					title={pane.path ? `Save to ${pane.path} (Ctrl+S)` : 'Save as… (Ctrl+S)'}
+				>
+					<SaveIcon class="size-3.5" />
+				</Button>
 			{/if}
 
 			{#if !pane.isEmpty}
