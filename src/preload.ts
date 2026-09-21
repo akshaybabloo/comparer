@@ -122,7 +122,9 @@ const bridge: ComparerBridge = {
 
 	clearRecent: (): Promise<void> => invoke('comparer:clear-recent'),
 
-	setLaser: (on: boolean): Promise<void> => invoke('comparer:set-laser', on),
+	minimizeWindow: (): Promise<void> => invoke('comparer:minimize-window'),
+	toggleMaximizeWindow: (): Promise<void> => invoke('comparer:toggle-maximize-window'),
+	closeWindow: (): Promise<void> => invoke('comparer:close-window'),
 
 	platform: process.platform,
 

@@ -334,16 +334,23 @@ function registerIpc() {
 		await updateRecent(() => []);
 	});
 
-	// Windows and Linux draw the window controls over the top-right of the page, where the
-	// laser border cannot reach, so their strip takes the border's colour instead. macOS
-	// keeps its traffic lights clear of the edge, so there is nothing to do there.
-	ipcMain.handle('comparer:set-laser', (event, on: boolean): void => {
-		if (process.platform === 'darwin') return;
-		BrowserWindow.fromWebContents(event.sender)?.setTitleBarOverlay({
-			color: on ? LASER_COLOR : TITLE_BAR_COLOR,
-			symbolColor: on ? LASER_SYMBOL_COLOR : TITLE_BAR_SYMBOL_COLOR,
-			height: TITLE_BAR_HEIGHT
-		});
+	// The window is frameless and the header draws its own controls, so minimising,
+	// maximising and closing all come back through here.
+	ipcMain.handle('comparer:minimize-window', (event): void => {
+		BrowserWindow.fromWebContents(event.sender)?.minimize();
+	});
+
+	// Also what the header's double-click does. Full screen is left to the menu: it is
+	// the system's own gesture, and leaving it maximised is the less surprising result.
+	ipcMain.handle('comparer:toggle-maximize-window', (event): void => {
+		const owner = BrowserWindow.fromWebContents(event.sender);
+		if (!owner) return;
+		if (owner.isMaximized()) owner.unmaximize();
+		else owner.maximize();
+	});
+
+	ipcMain.handle('comparer:close-window', (event): void => {
+		BrowserWindow.fromWebContents(event.sender)?.close();
 	});
 
 	ipcMain.handle('comparer:window-squared', (event): boolean => {
@@ -367,18 +374,6 @@ const applyContentSecurityPolicy = () => {
 	});
 };
 
-/**
- * The app header is `h-11` (44px) including its 1px bottom border. The controls
- * stop just above that border, so it runs unbroken beneath them.
- */
-const TITLE_BAR_HEIGHT = 43;
-/** The dark `--card` and `--foreground` tokens, which the header is painted with. */
-const TITLE_BAR_COLOR = '#171717';
-const TITLE_BAR_SYMBOL_COLOR = '#fafafa';
-/** Tailwind's `yellow-400`, the laser border, and dark symbols that stay readable on it. */
-const LASER_COLOR = '#facc15';
-const LASER_SYMBOL_COLOR = '#171717';
-
 /** A maximised or full-screen window fills its area edge to edge, so its corners are square. */
 const isSquared = (window: BrowserWindow) => window.isMaximized() || window.isFullScreen();
 
@@ -390,21 +385,11 @@ const createWindow = () => {
 		minWidth: 720,
 		minHeight: 480,
 		backgroundColor: '#0a0a0a',
-		// Frameless, with the app header acting as the title bar. The window
-		// controls are still the operating system's own rather than drawn by the
-		// app: traffic lights on macOS, caption buttons on Windows (keeping Snap
-		// Layouts), and theme-drawn buttons on Linux that follow the desktop's
-		// button layout.
-		titleBarStyle: 'hidden',
-		// Also what enables the `titlebar-area-*` CSS environment variables the
-		// header uses to keep clear of the controls, on whichever side they are.
-		titleBarOverlay: {
-			color: TITLE_BAR_COLOR,
-			symbolColor: TITLE_BAR_SYMBOL_COLOR,
-			height: TITLE_BAR_HEIGHT
-		},
-		// Centres the traffic lights vertically in the taller header.
-		...(process.platform === 'darwin' ? { trafficLightPosition: { x: 16, y: 15 } } : {}),
+		// Frameless, with the app header acting as the title bar and drawing its own
+		// window controls. The system's own are left off entirely — including the
+		// macOS traffic lights — so the laser border can run unbroken along the top
+		// edge instead of stopping at a strip the page cannot paint.
+		frame: false,
 		webPreferences: {
 			preload: path.join(__dirname, 'preload.js')
 		}

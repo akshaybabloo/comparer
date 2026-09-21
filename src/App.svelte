@@ -10,6 +10,7 @@
 	import Editor from '$lib/components/Editor.svelte';
 	import FolderTree from '$lib/components/FolderTree.svelte';
 	import ImageDiffView from '$lib/components/ImageDiffView.svelte';
+	import WindowControls from '$lib/components/WindowControls.svelte';
 	import type { DiffResult, FolderDiffResult, FolderProgress, ImageDiffResult, ImageMode } from '$lib/diff-types';
 	import type { DiffFilter } from '$lib/diff-view-model';
 	import type { ChangeRange } from '$lib/text-edit';
@@ -173,7 +174,6 @@
 		try {
 			const [items, list] = await Promise.all([window.comparer.launchItems(), window.comparer.recentComparisons()]);
 			recent = list;
-			if (laser) void window.comparer.setLaser(true).catch(() => {});
 			if (items.length > 0) await openItems(items);
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : 'Could not open the files the app was started with';
@@ -226,6 +226,9 @@
 	 */
 	const WINDOW_CORNER_RADIUS: Record<string, string> = { linux: '8px', win32: '8px', darwin: '10px' };
 
+	/** macOS puts its window buttons at the left of the title bar; every other system at the right. */
+	const macOs = window.comparer.platform === 'darwin';
+
 	/** Maximised or full screen, when the window's corners are square. */
 	let windowSquared = $state(false);
 	const cornerRadius = $derived(windowSquared ? '0px' : (WINDOW_CORNER_RADIUS[window.comparer.platform] ?? '0px'));
@@ -254,9 +257,6 @@
 
 	function setLaser(on: boolean) {
 		laser = on;
-		// The window controls are drawn by the system over the page, so the page cannot
-		// border them; main colours their strip to match instead.
-		void window.comparer.setLaser(on).catch(() => {});
 		try {
 			localStorage.setItem(LASER_KEY, on ? 'on' : 'off');
 		} catch {
@@ -594,6 +594,16 @@
 	}
 
 	/**
+	 * Double-clicking the title bar maximises or restores the window, which a frameless
+	 * one no longer does by itself. Only the bar's own background counts: a double-click
+	 * that lands on a control was meant for that control, not for the window.
+	 */
+	function toggleMaximizeFromTitleBar(event: MouseEvent) {
+		if (event.target !== event.currentTarget) return;
+		void window.comparer.toggleMaximizeWindow().catch(() => {});
+	}
+
+	/**
 	 * A file dropped anywhere outside a pane would otherwise make the window
 	 * navigate to it, replacing the app with the raw file — which reads as the
 	 * app simply breaking. The panes claim their own drops before this runs.
@@ -696,14 +706,21 @@
 {/if}
 
 <div class="flex h-full flex-col">
-	<!-- The window is frameless, so this header is the title bar: dragging it
-       moves the window, and every control in it opts out with `no-drag`. The
-       `titlebar-area-*` variables are the space the OS window controls leave
-       free — on the left on macOS, on the right elsewhere — and fall back to
-       plain padding when there are none. -->
+	<!-- The window is frameless, so this header is the title bar: dragging it moves
+       the window, double-clicking it maximises the window, and every control in it
+       opts out with `no-drag`. There are no system window buttons on any platform,
+       so the header draws its own — at the left on macOS, at the right elsewhere. -->
+	<!-- The double-click only repeats what the maximise button does, so the bar itself
+	     needs no role of its own to reach it. -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<header
-		class="flex h-11 shrink-0 items-center gap-3 border-b bg-card pr-[calc(100vw_-_env(titlebar-area-x,0px)_-_env(titlebar-area-width,100vw)_+_0.75rem)] pl-[calc(env(titlebar-area-x,0px)_+_0.75rem)] select-none [app-region:drag]"
+		class="flex h-11 shrink-0 items-center gap-3 border-b bg-card px-3 select-none [app-region:drag]"
+		ondblclick={toggleMaximizeFromTitleBar}
 	>
+		{#if macOs}
+			<WindowControls squared={windowSquared} />
+		{/if}
+
 		<div class="flex items-center gap-2">
 			<GitCompareIcon class="size-4 text-brand" />
 			<span class="text-sm font-semibold tracking-tight">Comparer</span>
@@ -722,7 +739,9 @@
 			</ToggleGroup.Item>
 		</ToggleGroup.Root>
 
-		<div class="ml-auto flex items-center gap-3 [app-region:no-drag]">
+		<!-- Stretched to the bar's full height so the Windows caption buttons can run its
+		     whole height and into the corner; everything else in here stays centred. -->
+		<div class="ml-auto flex items-center gap-3 self-stretch [app-region:no-drag]">
 			<!-- Images have no lines to wrap, but a tolerance to set — before comparing, or
            after, when the diff follows the slider. A tree can hide what did not change. -->
 			{#if (view === 'edit' && hasImage) || (view === 'diff' && currentImage && !folderResult)}
@@ -808,6 +827,10 @@
 						Compare
 					{/if}
 				</Button>
+			{/if}
+
+			{#if !macOs}
+				<WindowControls squared={windowSquared} />
 			{/if}
 		</div>
 	</header>
