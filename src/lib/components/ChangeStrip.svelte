@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { ChangeKind, ChangeMark } from '$lib/line-alignment';
-	import { STRIP_COLUMNS, type StripLine } from '$lib/minimap';
+	import { STRIP_COLUMNS, stripBox, type StripLine } from '$lib/minimap';
 
 	type Props = {
 		/**
@@ -81,8 +81,7 @@
 	let height = $state(0);
 
 	const scale = $derived(total > 0 && height > 0 ? Math.min(height / total, maxScale) : 0);
-	const boxTop = $derived(viewStart * scale);
-	const boxHeight = $derived(Math.max(MIN_BOX_PX, (viewEnd - viewStart) * scale));
+	const box = $derived(stripBox(scale, height, viewStart, viewEnd, MIN_BOX_PX));
 
 	// Drawn on a canvas: a long file has far more lines than the minimap has pixels, so
 	// each row of pixels samples the one line under it rather than drawing them all.
@@ -161,7 +160,7 @@
 	<canvas bind:this={canvas} class="pointer-events-none absolute inset-0 size-full"></canvas>
 	<div
 		class="pointer-events-none absolute inset-x-0 border border-foreground/60 bg-foreground/10"
-		style:top="{boxTop}px"
-		style:height="{boxHeight}px"
+		style:top="{box.top}px"
+		style:height="{box.height}px"
 	></div>
 </div>

@@ -38,3 +38,24 @@ export function measureText(parts: string | Iterable<string>): { indent: number;
 	// A line of nothing but whitespace draws nothing.
 	return indent < 0 ? { indent: 0, length: 0 } : { indent, length: column };
 }
+
+/**
+ * Where the on-screen box sits in the minimap, in minimap pixels, given how far the
+ * content is scrolled and how many minimap pixels one unit of it is drawn as.
+ *
+ * The box is never thinner than `minHeight`: in a long file the view is a sliver of the
+ * whole — a 773px window over 460,000px of content comes to barely one pixel — and a box
+ * that thin is neither visible nor grabbable. It is that widening that has to be held
+ * inside the strip: at the very bottom the extra height would otherwise hang off the end
+ * of the minimap and, since nothing clips it, out of the window.
+ */
+export function stripBox(
+	scale: number,
+	height: number,
+	viewStart: number,
+	viewEnd: number,
+	minHeight: number
+): { top: number; height: number } {
+	const boxHeight = Math.min(height, Math.max(minHeight, (viewEnd - viewStart) * scale));
+	return { top: Math.max(0, Math.min(viewStart * scale, height - boxHeight)), height: boxHeight };
+}
