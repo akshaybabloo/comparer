@@ -187,11 +187,12 @@ export type ComparerBridge = {
 	/** Takes one comparison off the recent list, returning what is left. */
 	forgetRecent: (id: string) => Promise<RecentComparison[]>;
 	clearRecent: () => Promise<void>;
-	/**
-	 * Colours the strip the system draws the window controls in to match the laser border,
-	 * or back to the title bar's colour, where the platform lets the app choose it.
-	 */
-	setLaser: (on: boolean) => Promise<void>;
+	/** Sends the window to the taskbar or dock. */
+	minimizeWindow: () => Promise<void>;
+	/** Maximises the window, or restores it if it is maximised already. */
+	toggleMaximizeWindow: () => Promise<void>;
+	/** Closes the window, as the header's close button does. */
+	closeWindow: () => Promise<void>;
 	/** The operating system, as Node names it: `linux`, `darwin` or `win32`. */
 	platform: string;
 	/** Whether the window has square corners right now: maximised or full screen. */
