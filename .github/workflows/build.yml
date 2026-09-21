@@ -61,17 +61,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          shopt -s nullglob globstar
           version=$(node -p "require('./package.json').version")
           mkdir -p dist
-          for file in out/make/**/*; do
-            [ -f "$file" ] || continue
-            case "$file" in
-              *.exe | *.deb | *.rpm | *.dmg | *.zip) ;;
-              *) continue ;;
-            esac
-            cp "$file" "dist/comparer-${version}-${{ matrix.name }}.${file##*.}"
-          done
+          find out/make -type f \
+            \( -name '*.exe' -o -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o -name '*.zip' \) \
+            -print0 |
+            while IFS= read -r -d '' file; do
+              cp "$file" "dist/comparer-${version}-${{ matrix.name }}.${file##*.}"
+            done
           ls -l dist
 
       - uses: actions/upload-artifact@v7
