@@ -14,10 +14,14 @@ const HOMEPAGE = 'https://github.com/akshaybabloo/comparer';
 // packages take the PNG through their makers instead.
 const ICON = 'assets/icon';
 
+// Both Linux makers take their categories as a union of the freedesktop names rather
+// than plain strings, so the annotation is what keeps this assignable to either.
+const LINUX_CATEGORIES: ('Development' | 'Utility')[] = ['Development', 'Utility'];
+
 const LINUX_OPTIONS = {
 	icon: `${ICON}.png`,
 	homepage: HOMEPAGE,
-	categories: ['Development', 'Utility']
+	categories: LINUX_CATEGORIES
 };
 
 const config: ForgeConfig = {

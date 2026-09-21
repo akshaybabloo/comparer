@@ -23,6 +23,7 @@
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import ChevronUpIcon from '@lucide/svelte/icons/chevron-up';
 	import GitCompareIcon from '@lucide/svelte/icons/git-compare';
+	import AppMark from '$lib/components/AppMark.svelte';
 	import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
 	import SaveIcon from '@lucide/svelte/icons/save';
 	import type { DocumentId } from './shared/protocol';
@@ -722,7 +723,7 @@
 		{/if}
 
 		<div class="flex items-center gap-2">
-			<GitCompareIcon class="size-4 text-brand" />
+			<AppMark class="size-4" />
 			<span class="text-sm font-semibold tracking-tight">Comparer</span>
 		</div>
 
