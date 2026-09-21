@@ -57,7 +57,7 @@
 		aria-label={label}
 		title={hint}
 		onclick={press}
-		class="grid h-full w-[46px] place-items-center text-white transition-colors [app-region:no-drag] focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring {tone}"
+		class="grid h-full w-[46px] place-items-center text-white transition-colors [app-region:no-drag] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring {tone}"
 	>
 		{@render glyph()}
 	</button>
@@ -130,32 +130,40 @@
 	</svg>
 {/snippet}
 
-<!-- GNOME glyphs: the 16px symbolic set, drawn with the weight Adwaita gives them. -->
+<!-- GNOME glyphs: the 16px symbolic set. Everything is a 2px stroke on whole-number
+     coordinates, and the caps are square, because these are drawn at 16 CSS pixels on a
+     one-to-one display: a 1.5px stroke straddles two rows of pixels and comes out as two
+     half-lit grey ones instead of one clean white line. Diagonals cannot be helped that
+     way, so the cross is given long arms and square ends, which keeps it reading as an X
+     rather than as a blot. -->
 {#snippet gnomeMinimise()}
-	<svg class="size-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-		<path d="M4 8h8" stroke-linecap="round" />
+	<svg class="size-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+		<path d="M4 8h8" />
 	</svg>
 {/snippet}
 
 {#snippet gnomeMaximise()}
-	<svg class="size-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+	<svg class="size-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
 		{#if squared}
-			<path d="M5.75 5.75v-3h7.5v7.5h-3" stroke-linejoin="round" />
-			<rect x="2.75" y="5.75" width="7.5" height="7.5" rx="1" />
+			<!-- The window steps back down out of the screen, over the one behind it. -->
+			<path d="M6 5V3h8v8h-2" />
+			<rect x="2" y="6" width="8" height="8" rx="1" />
 		{:else}
-			<rect x="3.25" y="3.25" width="9.5" height="9.5" rx="1" />
+			<rect x="4" y="4" width="8" height="8" rx="1" />
 		{/if}
 	</svg>
 {/snippet}
 
 {#snippet gnomeClose()}
-	<svg class="size-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-		<path d="m4.5 4.5 7 7M11.5 4.5l-7 7" stroke-linecap="round" />
+	<svg class="size-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+		<path d="m4 4 8 8M12 4l-8 8" />
 	</svg>
 {/snippet}
 
 {#if macOs}
-	<div class="group flex items-center gap-2 [app-region:no-drag]">
+	<!-- macOS puts the close button's left edge 20px in from the window; the title bar's own
+	     12px of padding covers most of that, so the group only makes up the last 8px. -->
+	<div class="group ml-2 flex items-center gap-2 [app-region:no-drag]">
 		{@render trafficLight('Close the window', 'Close', close, 'border-[#e0443e] bg-[#ff5f57]', macClose)}
 		{@render trafficLight('Minimise the window', 'Minimise', minimise, 'border-[#dea123] bg-[#febc2e]', macMinimise)}
 		{@render trafficLight(maximiseLabel, maximiseHint, toggleMaximise, 'border-[#1aad2b] bg-[#28c840]', macMaximise)}
