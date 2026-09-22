@@ -1,7 +1,7 @@
 {
 	"name": "comparer",
 	"productName": "comparer",
-	"version": "0.1.0",
+	"version": "0.0.0",
 	"description": "Compare text files, folders and images side by side",
 	"homepage": "https://github.com/akshaybabloo/comparer",
 	"main": ".vite/build/main.js",
