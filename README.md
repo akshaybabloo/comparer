@@ -15,6 +15,17 @@ comparer screenshot-a.png screenshot-b.png
 Relative paths are resolved against the current directory. When started this way, the app quits when its window closes,
 so tools that wait for it — such as `git difftool` — carry on once you are done.
 
+`comparer --help` lists everything it takes, and `comparer --version` prints the version. Both answer on the command
+line without opening a window:
+
+```sh
+comparer --version               # 1.2.3
+comparer --help
+```
+
+On Windows the packaged app is a GUI binary with no console attached, so these print nothing when run bare from `cmd`
+or PowerShell. Redirect the output to see it — `comparer --version | more`, or `comparer --version > version.txt`.
+
 Where the `comparer` executable lives depends on how it was installed:
 
 | Platform          | Executable                                           |
