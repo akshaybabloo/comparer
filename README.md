@@ -26,22 +26,30 @@ comparer --help
 On Windows the packaged app is a GUI binary with no console attached, so these print nothing when run bare from `cmd`
 or PowerShell. Redirect the output to see it — `comparer --version | more`, or `comparer --version > version.txt`.
 
-### Opening a patch
+### Opening a patch or a diff
 
-`--diff` takes a patch or diff file and compares the two texts its hunks describe, rather than two files on disk:
+`--diff` takes a patch or diff file; `--text` takes the diff itself. Either compares the two texts the diff describes,
+rather than two files on disk. `-` reads standard input:
 
 ```sh
 comparer --diff fix.patch
-git diff > fix.patch && comparer --diff fix.patch
+comparer --text "$(git diff)"
+diff -u old.txt new.txt | comparer --text -
+git diff | comparer --diff -
 ```
 
-Only what the patch quotes can be shown. A patch carries the changed lines and a few lines of context, not the whole
-file, so the comparison is the hunks one after another and its line numbers are the patch's own rather than the
-original file's. A patch describing several files opens the first and says what else it changes; a binary change is
-described by a patch but never quoted, so there is nothing to show for one.
+Quote the substitution. Unquoted, `--text $(diff a b)` is split on whitespace by the shell and only its first word
+reaches the app.
 
-Unified diffs are understood — the format `diff -u`, `git diff` and `patch` files use. Plain `diff a b` writes an
-older format that is not unified, so pass `-u` when making a patch by hand.
+Both formats are read: the unified format that `diff -u`, `git diff` and patch files use, and the older format plain
+`diff a b` writes. Prefer unified where there is a choice — it quotes a few lines of context around each change, which
+is what lets the two sides line up. The older format quotes only the changed lines, so a deletion in one place and an
+addition in another are paired up by what they contain, and can come out as a single change rather than as two.
+
+Only what the diff quotes can be shown. It carries the changed lines and a little context, not the whole file, so the
+comparison is the hunks one after another and its line numbers are the diff's own rather than the original file's. A
+patch describing several files opens the first and says what else it changes; a binary change is described by a patch
+but never quoted, so there is nothing to show for one.
 
 Where the `comparer` executable lives depends on how it was installed:
 

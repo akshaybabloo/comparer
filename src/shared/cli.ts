@@ -19,11 +19,20 @@ export type CliContext = {
 	version: string;
 };
 
+/** Where a diff to be shown comes from. */
+export type DiffSource =
+	/** A patch or diff file. */
+	| { from: 'file'; path: string }
+	/** Diff text given on the command line itself. */
+	| { from: 'text'; text: string }
+	/** Diff text piped in, which `-` asks for. */
+	| { from: 'stdin' };
+
 export type CliRequest =
 	/** Open these, or show the empty window when there are none. */
 	| { kind: 'open'; paths: string[] }
-	/** Read this patch and compare the two texts its hunks describe. */
-	| { kind: 'diff'; path: string }
+	/** Read a diff from here and compare the two texts it describes. */
+	| { kind: 'diff'; source: DiffSource }
 	/** Write this to stdout and exit successfully, as `--version` and `--help` do. */
 	| { kind: 'print'; text: string }
 	/** Write this to stderr and exit with a failure. */
@@ -38,7 +47,8 @@ export function parseCli(argv: string[], context: CliContext): CliRequest {
 		.description('Compare text files, folders and images side by side.')
 		.argument('[left]', 'file, folder or image to compare')
 		.argument('[right]', 'the one to compare it with')
-		.option('--diff <file>', 'compare the two texts a patch or diff file describes')
+		.option('--diff <file>', 'compare the two texts a patch or diff file describes; - reads standard input')
+		.option('--text <diff>', 'the same for diff text given here rather than in a file; - reads standard input')
 		.version(context.version)
 		// Electron and Chromium put their own flags in argv — --no-sandbox,
 		// --user-data-dir=…, --inspect and more — and those are not this app's to
@@ -71,7 +81,8 @@ Examples:
   comparer before/ after/
   comparer shot-a.png shot-b.png
   comparer --diff fix.patch
-  git diff > fix.patch && comparer --diff fix.patch`
+  comparer --text "$(git diff)"
+  diff -u old.txt new.txt | comparer --text -`
 		);
 
 	try {
@@ -85,14 +96,28 @@ Examples:
 	}
 
 	const paths = resolvePaths(program.args, context);
-	const { diff } = program.opts<{ diff?: string }>();
+	const { diff, text } = program.opts<{ diff?: string; text?: string }>();
 
-	// A patch stands in for both sides, so asking for one and naming files as well is
-	// two different comparisons at once.
-	if (diff !== undefined && paths.length > 0) {
-		return { kind: 'fail', message: "error: --diff compares the patch's own two sides, so it takes no paths" };
+	if (diff !== undefined && text !== undefined) {
+		return { kind: 'fail', message: 'error: --diff and --text are two ways to give the same thing; use one' };
 	}
 
-	if (diff !== undefined) return { kind: 'diff', path: resolveOne(diff, context.cwd) };
+	// A diff stands in for both sides, so asking for one and naming files as well is two
+	// different comparisons at once.
+	if ((diff !== undefined || text !== undefined) && paths.length > 0) {
+		const flag = diff !== undefined ? '--diff' : '--text';
+		return { kind: 'fail', message: `error: ${flag} compares the diff's own two sides, so it takes no paths` };
+	}
+
+	// `-` is the usual way to spell standard input, for either flag.
+	if (text !== undefined) {
+		return { kind: 'diff', source: text === '-' ? { from: 'stdin' } : { from: 'text', text } };
+	}
+	if (diff !== undefined) {
+		return {
+			kind: 'diff',
+			source: diff === '-' ? { from: 'stdin' } : { from: 'file', path: resolveOne(diff, context.cwd) }
+		};
+	}
 	return { kind: 'open', paths };
 }
