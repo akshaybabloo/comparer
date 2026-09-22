@@ -190,6 +190,9 @@
 		error = '';
 		await left.openItem(items[0]);
 		if (items[1]) await right.openItem(items[1]);
+		// Opening a patch says which of its files is on screen, and what else it changes.
+		const note = items.map((item) => ('opened' in item ? item.note : undefined)).find(Boolean);
+		if (note) showNotice(note);
 		if (items.length === 2 && !left.error && !right.error && !left.isEmpty && !right.isEmpty) await compare();
 	}
 

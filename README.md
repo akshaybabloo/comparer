@@ -26,6 +26,23 @@ comparer --help
 On Windows the packaged app is a GUI binary with no console attached, so these print nothing when run bare from `cmd`
 or PowerShell. Redirect the output to see it — `comparer --version | more`, or `comparer --version > version.txt`.
 
+### Opening a patch
+
+`--diff` takes a patch or diff file and compares the two texts its hunks describe, rather than two files on disk:
+
+```sh
+comparer --diff fix.patch
+git diff > fix.patch && comparer --diff fix.patch
+```
+
+Only what the patch quotes can be shown. A patch carries the changed lines and a few lines of context, not the whole
+file, so the comparison is the hunks one after another and its line numbers are the patch's own rather than the
+original file's. A patch describing several files opens the first and says what else it changes; a binary change is
+described by a patch but never quoted, so there is nothing to show for one.
+
+Unified diffs are understood — the format `diff -u`, `git diff` and `patch` files use. Plain `diff a b` writes an
+older format that is not unified, so pass `-u` when making a patch by hand.
+
 Where the `comparer` executable lives depends on how it was installed:
 
 | Platform          | Executable                                           |

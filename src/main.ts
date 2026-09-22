@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import { serviceHost } from './service-host';
+import { parsePatch, patchNote } from './lib/patch';
 import { parseCli } from './shared/cli';
 import { addRecent, parseRecent, type RecentComparison } from './shared/launch';
 import type {
@@ -86,19 +87,69 @@ const request = parseCli(process.argv, {
  * Windows build is a GUI binary with no console attached, so `comparer --version`
  * from `cmd` prints nothing; `comparer --version | more` does.
  */
-if (request.kind !== 'open') {
-	const failed = request.kind === 'fail';
-	(failed ? process.stderr : process.stdout).write(`${failed ? request.message : request.text}\n`);
-	app.exit(failed ? 1 : 0);
+if (request.kind === 'fail') {
+	process.stderr.write(`${request.message}\n`);
+	app.exit(1);
+} else if (request.kind === 'print') {
+	process.stdout.write(`${request.text}\n`);
+	app.exit(0);
 }
 
 /** The paths the app was started with, until the first window asks for them. */
 let pendingLaunchPaths = request.kind === 'open' ? request.paths : [];
+/** The patch `--diff` named, likewise, read when the first window asks. */
+let pendingDiffPath = request.kind === 'diff' ? request.path : null;
 /**
  * Started to compare something, as `git difftool` does: the app then quits with its
  * window, even on macOS, since the tool that started it waits for it to exit.
  */
-const launchedWithPaths = pendingLaunchPaths.length > 0;
+const launchedWithPaths = pendingLaunchPaths.length > 0 || pendingDiffPath !== null;
+
+/**
+ * Opens a patch as the two texts its hunks describe, each held by the service as a
+ * document of its own with no file behind it — so from the window on it is an ordinary
+ * comparison of two texts, right down to being diffed automatically.
+ *
+ * Only the first file of a multi-file patch is shown, with a note naming the rest. A
+ * binary change is described by a patch but not quoted, so there is nothing to show for
+ * one and it is only ever mentioned.
+ */
+async function openPatch(path: string): Promise<LaunchItem[]> {
+	let text: string;
+	try {
+		text = await readFile(path, 'utf8');
+	} catch (error) {
+		return [{ path, error: error instanceof Error ? error.message : String(error) }];
+	}
+
+	const files = parsePatch(text);
+	const shown = files.find((file) => !file.binary);
+	if (!shown) {
+		return [
+			{
+				path,
+				error: files.length === 0 ? 'No diff found in this file' : 'This patch only describes binary files'
+			}
+		];
+	}
+
+	const adopt = (content: string, name: string) =>
+		serviceHost.send<DocumentInfo>({ type: 'adopt', docId: null, text: content, name });
+
+	try {
+		const [before, after] = await Promise.all([
+			adopt(shown.before, `${shown.beforeName} (before)`),
+			adopt(shown.after, `${shown.afterName} (after)`)
+		]);
+		const note = patchNote(files, shown);
+		return [
+			{ path, opened: before, ...(note ? { note } : {}) },
+			{ path, opened: after }
+		];
+	} catch (error) {
+		return [{ path, error: error instanceof Error ? error.message : String(error) }];
+	}
+}
 
 /** Opens each path in the service, reporting a path that cannot be opened rather than failing them all. */
 function openPaths(paths: string[]): Promise<LaunchItem[]> {
@@ -313,6 +364,10 @@ function registerIpc() {
 	);
 
 	ipcMain.handle('comparer:launch-items', (): Promise<LaunchItem[]> => {
+		const patch = pendingDiffPath;
+		pendingDiffPath = null;
+		if (patch !== null) return openPatch(patch);
+
 		const paths = pendingLaunchPaths;
 		pendingLaunchPaths = [];
 		return openPaths(paths);

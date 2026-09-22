@@ -54,8 +54,12 @@ export type ImageInfo = {
 /** What opening a path produces: a text document, an image, or a folder. */
 export type OpenedInfo = DocumentInfo | ImageInfo | FolderInfo;
 
-/** A path given on the command line or remembered from before, opened, or why it could not be. */
-export type LaunchItem = { path: string; opened: OpenedInfo } | { path: string; error: string };
+/**
+ * A path given on the command line or remembered from before, opened, or why it could
+ * not be. `note` carries something worth saying about how it was opened — which file of
+ * a patch is on screen, and what else that patch changes.
+ */
+export type LaunchItem = { path: string; opened: OpenedInfo; note?: string } | { path: string; error: string };
 
 /** What a native file picker offers: any file, or only the image formats that can be compared. */
 export type PickKind = 'file' | 'image';
@@ -80,7 +84,7 @@ export type Chunk = {
 /** Requests sent from main into the service. */
 export type ServiceRequest =
 	| { type: 'open'; id: number; path: string }
-	| { type: 'adopt'; id: number; docId: DocumentId; text: string; name: string }
+	| { type: 'adopt'; id: number; docId: DocumentId | null; text: string; name: string }
 	| { type: 'chunk'; id: number; docId: DocumentId; from: number; maxBytes: number }
 	| { type: 'diff'; id: number; left: DocumentId | null; right: DocumentId | null; context: number; maxRows: number }
 	| { type: 'diffFolders'; id: number; left: DocumentId; right: DocumentId }

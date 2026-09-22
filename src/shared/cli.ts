@@ -1,5 +1,5 @@
 import { Command, CommanderError } from 'commander';
-import { resolvePaths } from './launch';
+import { resolveOne, resolvePaths } from './launch';
 
 /**
  * The command line, parsed. Main-process only: the renderer never sees argv, and
@@ -22,6 +22,8 @@ export type CliContext = {
 export type CliRequest =
 	/** Open these, or show the empty window when there are none. */
 	| { kind: 'open'; paths: string[] }
+	/** Read this patch and compare the two texts its hunks describe. */
+	| { kind: 'diff'; path: string }
 	/** Write this to stdout and exit successfully, as `--version` and `--help` do. */
 	| { kind: 'print'; text: string }
 	/** Write this to stderr and exit with a failure. */
@@ -36,6 +38,7 @@ export function parseCli(argv: string[], context: CliContext): CliRequest {
 		.description('Compare text files, folders and images side by side.')
 		.argument('[left]', 'file, folder or image to compare')
 		.argument('[right]', 'the one to compare it with')
+		.option('--diff <file>', 'compare the two texts a patch or diff file describes')
 		.version(context.version)
 		// Electron and Chromium put their own flags in argv — --no-sandbox,
 		// --user-data-dir=…, --inspect and more — and those are not this app's to
@@ -66,7 +69,9 @@ export function parseCli(argv: string[], context: CliContext): CliRequest {
 Examples:
   comparer old.txt new.txt
   comparer before/ after/
-  comparer shot-a.png shot-b.png`
+  comparer shot-a.png shot-b.png
+  comparer --diff fix.patch
+  git diff > fix.patch && comparer --diff fix.patch`
 		);
 
 	try {
@@ -79,5 +84,15 @@ Examples:
 		return error.exitCode === 0 ? { kind: 'print', text } : { kind: 'fail', message: text };
 	}
 
-	return { kind: 'open', paths: resolvePaths(program.args, context) };
+	const paths = resolvePaths(program.args, context);
+	const { diff } = program.opts<{ diff?: string }>();
+
+	// A patch stands in for both sides, so asking for one and naming files as well is
+	// two different comparisons at once.
+	if (diff !== undefined && paths.length > 0) {
+		return { kind: 'fail', message: "error: --diff compares the patch's own two sides, so it takes no paths" };
+	}
+
+	if (diff !== undefined) return { kind: 'diff', path: resolveOne(diff, context.cwd) };
+	return { kind: 'open', paths };
 }
