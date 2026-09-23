@@ -42,11 +42,15 @@ export function parseCli(argv: string[], context: CliContext): CliRequest {
 		// complain about. Unknown options fall through to the operands, where
 		// `resolvePaths` drops anything that starts with a dash.
 		//
-		// The gap this leaves: a Chromium flag whose value is a separate argument
-		// (`--user-data-dir /tmp/x`) leaves that value looking like a path to open.
-		// Chromium accepts the `=` form for all of them, which is what Electron and
-		// every launcher here use, so this is left as it is rather than second-guessed
-		// against a list of flags that would go stale.
+		// A switch written with its value as a separate argument
+		// (`--user-data-dir /tmp/x`) leaves that value among the operands, where it is
+		// taken for a path. That matches Chromium, which pairs a value only in the `=`
+		// form: given the spaced form it sets the switch to nothing and treats the token
+		// as a positional, and Chrome itself would try to open it. Checked against
+		// Electron — `--user-data-dir=X` moves the profile, `--user-data-dir X` does not.
+		// Swallowing the token here would mean keeping a list of every Chromium switch
+		// that takes a value, going stale as they come and go, and silently dropping an
+		// argument that was typed.
 		.allowUnknownOption()
 		.allowExcessArguments()
 		// Printing and exiting is the caller's job, so help and version come back as
