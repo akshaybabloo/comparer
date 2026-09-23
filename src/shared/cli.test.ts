@@ -70,4 +70,39 @@ describe('parseCli', () => {
 		expect(help.text).toContain('Compare text files, folders and images side by side.');
 		expect(help.text).toContain('comparer before/ after/');
 	});
+
+	it('takes a patch to compare, resolved like any other path', () => {
+		expect(parseCli(['comparer', '--diff', 'fix.patch'], packaged)).toEqual({
+			kind: 'diff',
+			path: '/home/me/project/fix.patch'
+		});
+		expect(parseCli(['comparer', '--diff', '/tmp/fix.patch'], packaged)).toEqual({
+			kind: 'diff',
+			path: '/tmp/fix.patch'
+		});
+	});
+
+	it('refuses a patch and a pair of paths at once, since either would be the comparison', () => {
+		const both = parseCli(['comparer', '--diff', 'fix.patch', 'a.txt', 'b.txt'], packaged);
+
+		expect(both.kind).toBe('fail');
+		if (both.kind !== 'fail') return;
+		expect(both.message).toContain('--diff');
+	});
+
+	it('explains itself when --diff is given nothing to read', () => {
+		const missing = parseCli(['comparer', '--diff'], packaged);
+
+		expect(missing.kind).toBe('fail');
+		if (missing.kind !== 'fail') return;
+		expect(missing.message).toContain('--diff');
+	});
+
+	it('mentions the patch flag in help', () => {
+		const help = parseCli(['comparer', '--help'], packaged);
+
+		expect(help.kind).toBe('print');
+		if (help.kind !== 'print') return;
+		expect(help.text).toContain('--diff <file>');
+	});
 });

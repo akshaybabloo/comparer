@@ -7,11 +7,16 @@ import { isAbsolute, resolve } from 'node:path';
  * A development run starts Electron as `electron [flags] .`, where `.` is the app
  * rather than something to compare, so it is only skipped when not packaged.
  */
+/** One path from the command line, against the directory the app was started from. */
+export function resolveOne(arg: string, cwd: string): string {
+	return isAbsolute(arg) ? arg : resolve(cwd, arg);
+}
+
 export function resolvePaths(args: string[], options: { packaged: boolean; appPath: string; cwd: string }): string[] {
 	return args
 		.filter((arg) => !arg.startsWith('-'))
 		.filter((arg) => options.packaged || (arg !== '.' && resolve(options.cwd, arg) !== resolve(options.appPath)))
-		.map((arg) => (isAbsolute(arg) ? arg : resolve(options.cwd, arg)))
+		.map((arg) => resolveOne(arg, options.cwd))
 		.slice(0, 2);
 }
 
