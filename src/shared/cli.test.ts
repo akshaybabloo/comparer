@@ -74,12 +74,42 @@ describe('parseCli', () => {
 	it('takes a patch to compare, resolved like any other path', () => {
 		expect(parseCli(['comparer', '--diff', 'fix.patch'], packaged)).toEqual({
 			kind: 'diff',
-			path: '/home/me/project/fix.patch'
+			source: { from: 'file', path: '/home/me/project/fix.patch' }
 		});
 		expect(parseCli(['comparer', '--diff', '/tmp/fix.patch'], packaged)).toEqual({
 			kind: 'diff',
-			path: '/tmp/fix.patch'
+			source: { from: 'file', path: '/tmp/fix.patch' }
 		});
+	});
+
+	it('takes diff text on the command line', () => {
+		const text = '--- a\n+++ b\n@@ -1 +1 @@\n-a\n+b\n';
+
+		expect(parseCli(['comparer', '--text', text], packaged)).toEqual({
+			kind: 'diff',
+			source: { from: 'text', text }
+		});
+	});
+
+	it('reads standard input for either flag, spelled the usual way', () => {
+		expect(parseCli(['comparer', '--text', '-'], packaged)).toEqual({ kind: 'diff', source: { from: 'stdin' } });
+		expect(parseCli(['comparer', '--diff', '-'], packaged)).toEqual({ kind: 'diff', source: { from: 'stdin' } });
+	});
+
+	it('refuses both flags at once, since they are two ways to give the same thing', () => {
+		const both = parseCli(['comparer', '--diff', 'fix.patch', '--text', '1c1'], packaged);
+
+		expect(both.kind).toBe('fail');
+		if (both.kind !== 'fail') return;
+		expect(both.message).toContain('use one');
+	});
+
+	it('refuses diff text alongside paths, naming the flag that was given', () => {
+		const clash = parseCli(['comparer', '--text', '1c1', 'a.txt', 'b.txt'], packaged);
+
+		expect(clash.kind).toBe('fail');
+		if (clash.kind !== 'fail') return;
+		expect(clash.message).toContain('--text');
 	});
 
 	it('refuses a patch and a pair of paths at once, since either would be the comparison', () => {

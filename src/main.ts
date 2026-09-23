@@ -3,8 +3,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import { serviceHost } from './service-host';
-import { parsePatch, patchNote } from './lib/patch';
-import { parseCli } from './shared/cli';
+import { parseDiff, patchNote } from './lib/patch';
+import { parseCli, type DiffSource } from './shared/cli';
 import { addRecent, parseRecent, type RecentComparison } from './shared/launch';
 import type {
 	Chunk,
@@ -97,38 +97,65 @@ if (request.kind === 'fail') {
 
 /** The paths the app was started with, until the first window asks for them. */
 let pendingLaunchPaths = request.kind === 'open' ? request.paths : [];
-/** The patch `--diff` named, likewise, read when the first window asks. */
-let pendingDiffPath = request.kind === 'diff' ? request.path : null;
+/** Where `--diff` or `--text` said to read a diff from, likewise. */
+let pendingDiff: DiffSource | null = request.kind === 'diff' ? request.source : null;
 /**
  * Started to compare something, as `git difftool` does: the app then quits with its
  * window, even on macOS, since the tool that started it waits for it to exit.
  */
-const launchedWithPaths = pendingLaunchPaths.length > 0 || pendingDiffPath !== null;
+const launchedWithPaths = pendingLaunchPaths.length > 0 || pendingDiff !== null;
 
 /**
- * Opens a patch as the two texts its hunks describe, each held by the service as a
- * document of its own with no file behind it — so from the window on it is an ordinary
- * comparison of two texts, right down to being diffed automatically.
+ * What a diff is being read from, in words: for the error the window shows, and to stand
+ * in for the file name the normal diff format does not carry.
+ */
+function describeSource(source: DiffSource): string {
+	if (source.from === 'file') return source.path;
+	return source.from === 'stdin' ? 'standard input' : 'the text given';
+}
+
+/** Everything piped in, or nothing when the app was not started from a pipe. */
+async function readStdin(): Promise<string> {
+	// A terminal with no pipe would simply wait for the user to type, and this is read
+	// while a window is already opening.
+	if (process.stdin.isTTY) throw new Error('Nothing was piped in');
+	const chunks: Buffer[] = [];
+	for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+	return Buffer.concat(chunks).toString('utf8');
+}
+
+function readSource(source: DiffSource): Promise<string> {
+	if (source.from === 'file') return readFile(source.path, 'utf8');
+	return source.from === 'stdin' ? readStdin() : Promise.resolve(source.text);
+}
+
+/**
+ * Opens a diff as the two texts it describes, each held by the service as a document of
+ * its own with no file behind it — so from the window on it is an ordinary comparison of
+ * two texts, right down to being diffed automatically.
  *
  * Only the first file of a multi-file patch is shown, with a note naming the rest. A
  * binary change is described by a patch but not quoted, so there is nothing to show for
  * one and it is only ever mentioned.
  */
-async function openPatch(path: string): Promise<LaunchItem[]> {
+async function openDiff(source: DiffSource): Promise<LaunchItem[]> {
+	const label = describeSource(source);
+
 	let text: string;
 	try {
-		text = await readFile(path, 'utf8');
+		text = await readSource(source);
 	} catch (error) {
-		return [{ path, error: error instanceof Error ? error.message : String(error) }];
+		return [{ path: label, error: error instanceof Error ? error.message : String(error) }];
 	}
 
-	const files = parsePatch(text);
+	// The normal format names no files, so what was read stands in for a name.
+	const files = parseDiff(text, source.from === 'file' ? path.basename(source.path) : 'diff');
 	const shown = files.find((file) => !file.binary);
 	if (!shown) {
 		return [
 			{
-				path,
-				error: files.length === 0 ? 'No diff found in this file' : 'This patch only describes binary files'
+				path: label,
+				error: files.length === 0 ? 'No diff found' : 'This diff only describes binary files'
 			}
 		];
 	}
@@ -143,11 +170,11 @@ async function openPatch(path: string): Promise<LaunchItem[]> {
 		]);
 		const note = patchNote(files, shown);
 		return [
-			{ path, opened: before, ...(note ? { note } : {}) },
-			{ path, opened: after }
+			{ path: label, opened: before, ...(note ? { note } : {}) },
+			{ path: label, opened: after }
 		];
 	} catch (error) {
-		return [{ path, error: error instanceof Error ? error.message : String(error) }];
+		return [{ path: label, error: error instanceof Error ? error.message : String(error) }];
 	}
 }
 
@@ -364,9 +391,9 @@ function registerIpc() {
 	);
 
 	ipcMain.handle('comparer:launch-items', (): Promise<LaunchItem[]> => {
-		const patch = pendingDiffPath;
-		pendingDiffPath = null;
-		if (patch !== null) return openPatch(patch);
+		const source = pendingDiff;
+		pendingDiff = null;
+		if (source !== null) return openDiff(source);
 
 		const paths = pendingLaunchPaths;
 		pendingLaunchPaths = [];

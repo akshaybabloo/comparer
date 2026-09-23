@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parsePatch, patchNote } from './patch';
+import { parseDiff, parseNormalDiff, parsePatch, patchNote } from './patch';
 
 /**
  * The fixtures are the real output of `diff -u` and `git diff`, pasted as they came,
@@ -222,5 +222,60 @@ describe('patchNote', () => {
 		expect(patchNote(files, files[0])).toBe(
 			'Showing one.ts; the patch also changes two.ts, three.ts, four.ts and 2 more.'
 		);
+	});
+});
+
+describe('parseNormalDiff', () => {
+	// Real `diff n1.txt n2.txt` output: a change, an addition and a deletion.
+	const patch = ['2c2', '< two', '---', '> TWO', '4a5', '> EXTRA', '6d6', '< six', ''].join('\n');
+
+	it('reads the lines each side of the changes', () => {
+		expect(parseNormalDiff(patch, 'n1.txt')).toEqual([
+			{
+				name: 'n1.txt',
+				beforeName: 'n1.txt',
+				afterName: 'n1.txt',
+				before: 'two\nsix\n',
+				after: 'TWO\nEXTRA\n',
+				binary: false
+			}
+		]);
+	});
+
+	it('keeps a missing final newline, which this format marks too', () => {
+		const bare = ['2c2', '< b', '\\ No newline at end of file', '---', '> B', '\\ No newline at end of file', ''].join(
+			'\n'
+		);
+
+		expect(parseNormalDiff(bare, 'x')[0]).toMatchObject({ before: 'b', after: 'B' });
+	});
+
+	it('keeps an empty changed line, which diff writes as the marker alone', () => {
+		const blank = ['1c1', '<', '---', '> filled', ''].join('\n');
+
+		expect(parseNormalDiff(blank, 'x')[0]).toMatchObject({ before: '\n', after: 'filled\n' });
+	});
+
+	it('finds nothing in text without commands, so prose is not mistaken for a diff', () => {
+		expect(parseNormalDiff('< quoted from an email\n> a reply\n', 'x')).toEqual([]);
+		expect(parseNormalDiff('', 'x')).toEqual([]);
+	});
+});
+
+describe('parseDiff', () => {
+	it('reads a unified diff, keeping the names it carries', () => {
+		const unified = ['--- a.txt', '+++ b.txt', '@@ -1 +1 @@', '-a', '+b', ''].join('\n');
+
+		expect(parseDiff(unified, 'ignored')).toMatchObject([{ name: 'b.txt', before: 'a\n', after: 'b\n' }]);
+	});
+
+	it('falls back to the normal format, which carries no names', () => {
+		const normal = ['1c1', '< a', '---', '> b', ''].join('\n');
+
+		expect(parseDiff(normal, 'pasted diff')).toMatchObject([{ name: 'pasted diff', before: 'a\n', after: 'b\n' }]);
+	});
+
+	it('finds no diff in ordinary text', () => {
+		expect(parseDiff('nothing to see here\n', 'x')).toEqual([]);
 	});
 });

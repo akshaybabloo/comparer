@@ -245,3 +245,88 @@ export function patchNote(files: PatchFile[], shown: PatchFile): string {
 	const all = rest > 0 ? `${listed} and ${rest} more` : listed;
 	return `Showing ${shown.name}; the patch also changes ${all}.`;
 }
+
+/**
+ * A command in the normal diff format: `2c2`, `4a5`, `6,9d5` — the line or range it
+ * touches on each side, and whether lines were changed, added or deleted.
+ */
+const NORMAL_COMMAND = /^\d+(?:,\d+)?[acd]\d+(?:,\d+)?$/;
+
+/**
+ * The format plain `diff a b` writes, without `-u`: a command line, then the lines it
+ * removes prefixed `< `, then `---`, then the lines it adds prefixed `> `.
+ *
+ * It quotes no context at all, so the reconstruction is only the changed lines. That
+ * costs something the unified format gives for free: with no surrounding lines to anchor
+ * them, a deletion here and an addition there are re-paired by the app's own diff on
+ * their content, so they can come out as one modification rather than a deletion and an
+ * addition. Everything the diff quoted is still on screen and still coloured as a change;
+ * only the pairing is the app's rather than the original diff's.
+ *
+ * The format also names no files, so the caller supplies a name for what is being read.
+ */
+export function parseNormalDiff(text: string, name: string): PatchFile[] {
+	const before: string[] = [];
+	const after: string[] = [];
+	let seenCommand = false;
+	let beforeEndsBare = false;
+	let afterEndsBare = false;
+	let lastSide: 'before' | 'after' | null = null;
+
+	const lines = text.split('\n');
+	if (lines.at(-1) === '') lines.pop();
+
+	for (const raw of lines) {
+		const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
+
+		if (NORMAL_COMMAND.test(line)) {
+			seenCommand = true;
+			lastSide = null;
+			continue;
+		}
+		if (!seenCommand) continue;
+
+		// The separator between the two sides of a change, which is not `--- name`: that
+		// has a name after it and belongs to a unified diff.
+		if (line === '---') continue;
+
+		if (line.startsWith('\\') && lastSide !== null) {
+			if (lastSide === 'before') beforeEndsBare = true;
+			else afterEndsBare = true;
+			continue;
+		}
+
+		// `diff` writes `< ` and `> `, and an empty line as the marker alone.
+		if (line === '<' || line.startsWith('< ')) {
+			before.push(line.slice(2));
+			lastSide = 'before';
+		} else if (line === '>' || line.startsWith('> ')) {
+			after.push(line.slice(2));
+			lastSide = 'after';
+		}
+	}
+
+	if (!seenCommand || (before.length === 0 && after.length === 0)) return [];
+	return [
+		{
+			name,
+			beforeName: name,
+			afterName: name,
+			before: join(before, beforeEndsBare),
+			after: join(after, afterEndsBare),
+			binary: false
+		}
+	];
+}
+
+/**
+ * A diff in whichever format it was written: unified, as `git diff`, `diff -u` and patch
+ * files use, or the normal format plain `diff` writes. Empty when the text holds neither.
+ *
+ * `name` stands in for a file name the normal format does not carry — what is being read,
+ * such as the patch's own file name.
+ */
+export function parseDiff(text: string, name = 'diff'): PatchFile[] {
+	const unified = parsePatch(text);
+	return unified.length > 0 ? unified : parseNormalDiff(text, name);
+}
