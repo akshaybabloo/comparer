@@ -1,29 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { addRecent, launchPaths, parseRecent, type RecentComparison } from './launch';
+import { addRecent, parseRecent, resolvePaths, type RecentComparison } from './launch';
 
-describe('launchPaths', () => {
+describe('resolvePaths', () => {
 	const dev = { packaged: false, appPath: '/src/comparer', cwd: '/src/comparer' };
 	const packaged = { packaged: true, appPath: '/opt/comparer/resources/app.asar', cwd: '/home/me/project' };
 
 	it('skips flags and the app itself in a development run', () => {
-		expect(launchPaths(['electron', '--inspect', '--no-sandbox', '.'], dev)).toEqual([]);
-		expect(launchPaths(['electron', '--no-sandbox', 'a.txt', 'b.txt', '.'], dev)).toEqual([
+		expect(resolvePaths(['--inspect', '--no-sandbox', '.'], dev)).toEqual([]);
+		expect(resolvePaths(['--no-sandbox', 'a.txt', 'b.txt', '.'], dev)).toEqual([
 			'/src/comparer/a.txt',
 			'/src/comparer/b.txt'
 		]);
 	});
 
 	it('resolves relative paths against the working directory, keeping absolute ones', () => {
-		expect(launchPaths(['comparer', 'old/file.txt', '/tmp/new.txt'], packaged)).toEqual([
+		expect(resolvePaths(['old/file.txt', '/tmp/new.txt'], packaged)).toEqual([
 			'/home/me/project/old/file.txt',
 			'/tmp/new.txt'
 		]);
 		// A packaged app has no app path argument, so `.` is the working directory.
-		expect(launchPaths(['comparer', '.', '../other'], packaged)).toEqual(['/home/me/project', '/home/me/other']);
+		expect(resolvePaths(['.', '../other'], packaged)).toEqual(['/home/me/project', '/home/me/other']);
 	});
 
 	it('takes at most two paths', () => {
-		expect(launchPaths(['comparer', 'a', 'b', 'c'], packaged)).toHaveLength(2);
+		expect(resolvePaths(['a', 'b', 'c'], packaged)).toHaveLength(2);
 	});
 });
 

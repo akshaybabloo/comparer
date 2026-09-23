@@ -3,7 +3,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import { serviceHost } from './service-host';
-import { addRecent, launchPaths, parseRecent, type RecentComparison } from './shared/launch';
+import { parseCli } from './shared/cli';
+import { addRecent, parseRecent, type RecentComparison } from './shared/launch';
 import type {
 	Chunk,
 	DocumentId,
@@ -71,12 +72,28 @@ const DIFF_MAX_ROWS = 200_000;
  */
 const folderDiffs = new Map<number, AbortController>();
 
-/** The paths the app was started with, until the first window asks for them. */
-let pendingLaunchPaths = launchPaths(process.argv, {
+const request = parseCli(process.argv, {
 	packaged: app.isPackaged,
 	appPath: app.getAppPath(),
-	cwd: process.cwd()
+	cwd: process.cwd(),
+	version: app.getVersion()
 });
+
+/**
+ * `--version` and `--help` are answered on the command line and no window is opened.
+ *
+ * Only a terminal that the process's output reaches will show this. A packaged
+ * Windows build is a GUI binary with no console attached, so `comparer --version`
+ * from `cmd` prints nothing; `comparer --version | more` does.
+ */
+if (request.kind !== 'open') {
+	const failed = request.kind === 'fail';
+	(failed ? process.stderr : process.stdout).write(`${failed ? request.message : request.text}\n`);
+	app.exit(failed ? 1 : 0);
+}
+
+/** The paths the app was started with, until the first window asks for them. */
+let pendingLaunchPaths = request.kind === 'open' ? request.paths : [];
 /**
  * Started to compare something, as `git difftool` does: the app then quits with its
  * window, even on macOS, since the tool that started it waits for it to exit.
