@@ -281,7 +281,8 @@ export const MAX_MATCHES = 10_000;
 
 const textCache = new WeakMap<DiffRow, string>();
 
-function rowText(row: DiffRow): string {
+/** The text of a line, without its line ending. */
+export function rowText(row: DiffRow): string {
 	let text = textCache.get(row);
 	if (text === undefined) {
 		text = row.segments.map((segment) => segment.value).join('');
@@ -365,12 +366,32 @@ export function highlightParts(parts: RenderedPart[], highlights: Highlight[]): 
  * `rows` are every row of the diff in order. A side with nothing in the change
  * gets an empty range at the point the other side's lines would go.
  */
-export function changeRange(rows: DiffRow[], at: number): ChangeRange {
+/** Where the run of changed rows around `at` starts, and where it ends (exclusive). */
+function changeBounds(rows: DiffRow[], at: number): { start: number; end: number } {
 	let start = at;
 	while (start > 0 && rows[start - 1].tag !== 'equal') start--;
 	let end = at;
 	while (end < rows.length && rows[end].tag !== 'equal') end++;
+	return { start, end };
+}
 
+/**
+ * The text of the change around `at`, for the clipboard: the lines one side had
+ * there, or both as a diff, deleted lines marked `-` and inserted ones `+`.
+ */
+export function changeText(rows: DiffRow[], at: number, side: 'left' | 'right' | 'both'): string {
+	const { start, end } = changeBounds(rows, at);
+	const block = rows.slice(start, end);
+	if (side === 'both') return block.map((row) => (row.tag === 'delete' ? '-' : '+') + rowText(row)).join('\n');
+	const tag = side === 'left' ? 'delete' : 'insert';
+	return block
+		.filter((row) => row.tag === tag)
+		.map(rowText)
+		.join('\n');
+}
+
+export function changeRange(rows: DiffRow[], at: number): ChangeRange {
+	const { start, end } = changeBounds(rows, at);
 	const block = rows.slice(start, end);
 	const deleted = block.filter((row) => row.tag === 'delete');
 	const inserted = block.filter((row) => row.tag === 'insert');

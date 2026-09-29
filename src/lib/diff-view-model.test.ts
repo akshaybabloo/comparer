@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { DiffHunk, DiffRow, DiffTag } from './diff-types';
 import {
 	changeRange,
+	changeText,
 	changeStarts,
 	filterRows,
 	findMatches,
@@ -186,5 +187,25 @@ describe('changeRange', () => {
 			{ ...row('equal', 'same'), oldLine: 1, newLine: 2 }
 		];
 		expect(changeRange(rows, 0)).toEqual({ left: { from: 0, to: 0 }, right: { from: 0, to: 1 } });
+	});
+});
+
+describe('changeText', () => {
+	it('gives either side of a change, or both as a diff', () => {
+		const rows = [
+			row('equal', 'alpha'),
+			row('delete', 'bravo'),
+			row('insert', 'Bravo'),
+			row('insert', 'charlie'),
+			row('equal', 'delta')
+		];
+		expect(changeText(rows, 2, 'both')).toBe('-bravo\n+Bravo\n+charlie');
+		expect(changeText(rows, 1, 'left')).toBe('bravo');
+		expect(changeText(rows, 3, 'right')).toBe('Bravo\ncharlie');
+	});
+
+	it('is empty for a side the change has no lines on', () => {
+		const rows = [row('equal', 'a'), row('insert', 'b'), row('equal', 'c')];
+		expect(changeText(rows, 1, 'left')).toBe('');
 	});
 });

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import * as ContextMenu from '$lib/components/ui/context-menu';
 	import * as InputGroup from '$lib/components/ui/input-group';
 	import * as Select from '$lib/components/ui/select';
 	import { Button } from '$lib/components/ui/button';
@@ -13,9 +14,18 @@
 	import type { Side } from '$lib/line-alignment';
 	import { measureText, STRIP_COLUMNS, type StripLine } from '$lib/minimap';
 	import { HIGHLIGHT_LIMIT_BYTES, type PaneState } from '$lib/panes.svelte';
-	import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+	import {
+		defaultKeymap,
+		history,
+		historyKeymap,
+		redo,
+		redoDepth,
+		selectAll,
+		undo,
+		undoDepth
+	} from '@codemirror/commands';
 	import { bracketMatching, foldGutter, indentOnInput, indentUnit } from '@codemirror/language';
-	import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
+	import { highlightSelectionMatches, openSearchPanel, search, searchKeymap } from '@codemirror/search';
 	import { Annotation, Compartment, EditorState } from '@codemirror/state';
 	import {
 		EditorView,
@@ -26,11 +36,18 @@
 		lineNumbers,
 		rectangularSelection
 	} from '@codemirror/view';
+	import ClipboardPasteIcon from '@lucide/svelte/icons/clipboard-paste';
+	import CopyIcon from '@lucide/svelte/icons/copy';
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import FolderIcon from '@lucide/svelte/icons/folder';
 	import FolderOpenIcon from '@lucide/svelte/icons/folder-open';
 	import ImageIcon from '@lucide/svelte/icons/image';
+	import Redo2Icon from '@lucide/svelte/icons/redo-2';
 	import SaveIcon from '@lucide/svelte/icons/save';
+	import ScissorsIcon from '@lucide/svelte/icons/scissors';
+	import SearchIcon from '@lucide/svelte/icons/search';
+	import Undo2Icon from '@lucide/svelte/icons/undo-2';
+	import { ContextMenu as ContextMenuPrimitive } from 'bits-ui';
 	import { tick, untrack } from 'svelte';
 	import XIcon from '@lucide/svelte/icons/x';
 
@@ -219,6 +236,55 @@
 		if (el.scrollTop <= 0) return;
 		const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
 		if (fromBottom < el.clientHeight) void pane.loadMore();
+	}
+
+	/** What the editor allowed when the context menu opened, which decides the items it offers. */
+	let menu = $state.raw({ editable: false, selected: false, canUndo: false, canRedo: false });
+
+	/**
+	 * Right-clicking outside the selection moves the cursor there first, as native editors
+	 * do, so the menu acts on what was clicked rather than wherever the cursor was.
+	 */
+	function onContextMenu(event: MouseEvent) {
+		const instance = view;
+		if (!instance) return;
+		const position = instance.posAtCoords({ x: event.clientX, y: event.clientY });
+		const inSelection = instance.state.selection.ranges.some(
+			(range) => position !== null && !range.empty && range.from <= position && position <= range.to
+		);
+		if (position !== null && !inSelection) instance.dispatch({ selection: { anchor: position } });
+		const state = instance.state;
+		menu = {
+			editable: state.facet(EditorView.editable),
+			selected: state.selection.ranges.some((range) => !range.empty),
+			canUndo: undoDepth(state) > 0,
+			canRedo: redoDepth(state) > 0
+		};
+	}
+
+	function selectedText(instance: EditorView): string {
+		const { state } = instance;
+		return state.selection.ranges.map((range) => state.sliceDoc(range.from, range.to)).join(state.lineBreak);
+	}
+
+	async function copySelection(cut: boolean) {
+		const instance = view;
+		if (!instance) return;
+		await navigator.clipboard.writeText(selectedText(instance));
+		if (cut) instance.dispatch(instance.state.replaceSelection(''), { userEvent: 'delete.cut' });
+	}
+
+	async function paste() {
+		const text = await navigator.clipboard.readText();
+		view?.dispatch(view.state.replaceSelection(text), { userEvent: 'input.paste' });
+	}
+
+	/** Copies the line the cursor is on, which a right-click has just moved it to. */
+	function copyLine() {
+		const instance = view;
+		if (!instance) return;
+		const line = instance.state.doc.lineAt(instance.state.selection.main.head);
+		void navigator.clipboard.writeText(line.text);
 	}
 
 	/**
@@ -600,7 +666,71 @@
 			/>
 		{:else if pane.acceptsText}
 			<div class="flex h-full">
-				<div class="h-full min-w-0 flex-1" {@attach codemirror}></div>
+				<!-- The editor is the trigger itself: the wrapper component would stop text being selected. -->
+				<ContextMenu.Root>
+					<ContextMenuPrimitive.Trigger oncontextmenu={onContextMenu}>
+						{#snippet child({ props })}
+							<div {...props} class="h-full min-w-0 flex-1" {@attach codemirror}></div>
+						{/snippet}
+					</ContextMenuPrimitive.Trigger>
+					<!-- Focus goes back to the text, not the trigger, so typing carries on where it was. -->
+					<ContextMenu.Content
+						class="w-52"
+						onCloseAutoFocus={(event) => {
+							event.preventDefault();
+							view?.focus();
+						}}
+					>
+						{#if menu.editable}
+							<ContextMenu.Item disabled={!menu.canUndo} onSelect={() => view && undo(view)}>
+								<Undo2Icon />
+								Undo
+								<ContextMenu.Shortcut>Ctrl+Z</ContextMenu.Shortcut>
+							</ContextMenu.Item>
+							<ContextMenu.Item disabled={!menu.canRedo} onSelect={() => view && redo(view)}>
+								<Redo2Icon />
+								Redo
+								<ContextMenu.Shortcut>Ctrl+Shift+Z</ContextMenu.Shortcut>
+							</ContextMenu.Item>
+							<ContextMenu.Separator />
+							<ContextMenu.Item disabled={!menu.selected} onSelect={() => void copySelection(true)}>
+								<ScissorsIcon />
+								Cut
+								<ContextMenu.Shortcut>Ctrl+X</ContextMenu.Shortcut>
+							</ContextMenu.Item>
+						{/if}
+						<ContextMenu.Item disabled={!menu.selected} onSelect={() => void copySelection(false)}>
+							<CopyIcon />
+							Copy
+							<ContextMenu.Shortcut>Ctrl+C</ContextMenu.Shortcut>
+						</ContextMenu.Item>
+						{#if menu.editable}
+							<ContextMenu.Item onSelect={() => void paste()}>
+								<ClipboardPasteIcon />
+								Paste
+								<ContextMenu.Shortcut>Ctrl+V</ContextMenu.Shortcut>
+							</ContextMenu.Item>
+						{/if}
+						<ContextMenu.Item inset onSelect={copyLine}>Copy line</ContextMenu.Item>
+						<ContextMenu.Item inset onSelect={() => view && selectAll(view)}>
+							Select all
+							<ContextMenu.Shortcut>Ctrl+A</ContextMenu.Shortcut>
+						</ContextMenu.Item>
+						<ContextMenu.Separator />
+						<ContextMenu.Item onSelect={() => view && openSearchPanel(view)}>
+							<SearchIcon />
+							Find
+							<ContextMenu.Shortcut>Ctrl+F</ContextMenu.Shortcut>
+						</ContextMenu.Item>
+						{#if pane.kind === 'file' && pane.unsaved}
+							<ContextMenu.Item onSelect={() => void save()}>
+								<SaveIcon />
+								Save
+								<ContextMenu.Shortcut>Ctrl+S</ContextMenu.Shortcut>
+							</ContextMenu.Item>
+						{/if}
+					</ContextMenu.Content>
+				</ContextMenu.Root>
 				{#if !pane.isEmpty}
 					<ChangeStrip
 						total={stripView.total}
