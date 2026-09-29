@@ -1,6 +1,7 @@
 <script lang="ts">
 	import ChangeStrip from '$lib/components/ChangeStrip.svelte';
 	import { Button } from '$lib/components/ui/button';
+	import * as ContextMenu from '$lib/components/ui/context-menu';
 	import { Input } from '$lib/components/ui/input';
 	import { formatCount } from '$lib/format';
 	import type { DiffResult, DiffRow } from '$lib/diff-types';
@@ -10,6 +11,7 @@
 		changeOf,
 		changeRange,
 		changeStarts,
+		changeText,
 		columnsOf,
 		filterRows,
 		findMatches,
@@ -17,6 +19,7 @@
 		highlightParts,
 		MAX_MATCHES,
 		renderSegments,
+		rowText,
 		sliceByColumns,
 		TAB_SIZE,
 		toSplitRows,
@@ -28,11 +31,13 @@
 	} from '$lib/diff-view-model';
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import ChevronUpIcon from '@lucide/svelte/icons/chevron-up';
+	import CopyIcon from '@lucide/svelte/icons/copy';
 	import CornerDownLeftIcon from '@lucide/svelte/icons/corner-down-left';
 	import XIcon from '@lucide/svelte/icons/x';
 	import type { ChangeRange } from '$lib/text-edit';
 	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
 	import ArrowRightIcon from '@lucide/svelte/icons/arrow-right';
+	import { ContextMenu as ContextMenuPrimitive } from 'bits-ui';
 	import { tick } from 'svelte';
 
 	type Props = {
@@ -503,6 +508,40 @@
 		if (index !== undefined && rows[index]?.kind !== 'collapsed') copy(index, toward);
 	}
 
+	/** What a right-click landed on: the line under it, the change that line is part of, and any selected text. */
+	type MenuTarget = {
+		line: DiffRow | null;
+		/** Position in `allRows` of a changed row of the change, or null off a change. */
+		change: number | null;
+		/** The first visual row of that change, for copying it across. */
+		changeIndex: number;
+		selection: string;
+	};
+	let menu = $state.raw<MenuTarget>({ line: null, change: null, changeIndex: -1, selection: '' });
+
+	function onContextMenu(event: MouseEvent) {
+		const selection = window.getSelection()?.toString() ?? '';
+		menu = { line: null, change: null, changeIndex: -1, selection };
+		if (!viewport || rows.length === 0) return;
+		const rect = viewport.getBoundingClientRect();
+		const y = scrollTop + event.clientY - rect.top;
+		if (y < 0 || y >= totalHeight) return;
+		const index = indexAt(y);
+		const item = rows[index];
+		if (item.kind === 'collapsed') return;
+
+		// Split halves are the same width, so the middle of the view divides them.
+		const line =
+			item.kind === 'row' ? item.row : event.clientX - rect.left < viewportWidth / 2 ? item.left : item.right;
+		const changed = item.kind === 'row' ? item.row : item.left?.tag === 'delete' ? item.left : item.right;
+		const position = changed && changed.tag !== 'equal' ? rowPosition.get(changed) : undefined;
+		menu = { line, change: position ?? null, changeIndex: position === undefined ? -1 : changeAt(index), selection };
+	}
+
+	function toClipboard(text: string) {
+		void navigator.clipboard.writeText(text);
+	}
+
 	function onScroll(event: Event) {
 		const el = event.currentTarget as HTMLElement;
 		scrollTop = el.scrollTop;
@@ -587,6 +626,48 @@
 			<span class="pointer-events-none absolute inset-0 z-[1] animate-jump-flash bg-brand/35" aria-hidden="true"></span>
 		{/key}
 	{/if}
+{/snippet}
+
+<!-- Copying from the line or change a right-click landed on. -->
+{#snippet contextMenu()}
+	{@const { line, change, changeIndex, selection } = menu}
+	{@const left = change === null ? '' : changeText(allRows, change, 'left')}
+	{@const right = change === null ? '' : changeText(allRows, change, 'right')}
+	<ContextMenu.Content class="w-60">
+		{#if selection}
+			<ContextMenu.Item onSelect={() => toClipboard(selection)}>
+				<CopyIcon />
+				Copy selection
+			</ContextMenu.Item>
+		{/if}
+		<ContextMenu.Item inset={!!selection} disabled={!line} onSelect={() => line && toClipboard(rowText(line))}>
+			{#if !selection}<CopyIcon />{/if}
+			Copy line
+		</ContextMenu.Item>
+		{#if change !== null}
+			<ContextMenu.Separator />
+			<ContextMenu.Item inset onSelect={() => toClipboard(changeText(allRows, change, 'both'))}>
+				Copy change as diff
+			</ContextMenu.Item>
+			<ContextMenu.Item inset disabled={!left} onSelect={() => toClipboard(left)}>Copy left version</ContextMenu.Item>
+			<ContextMenu.Item inset disabled={!right} onSelect={() => toClipboard(right)}>
+				Copy right version
+			</ContextMenu.Item>
+			{#if oncopy}
+				<ContextMenu.Separator />
+				<ContextMenu.Item onSelect={() => copy(changeIndex, 'right')}>
+					<ArrowRightIcon />
+					Copy change to the right
+					<ContextMenu.Shortcut>Alt+→</ContextMenu.Shortcut>
+				</ContextMenu.Item>
+				<ContextMenu.Item onSelect={() => copy(changeIndex, 'left')}>
+					<ArrowLeftIcon />
+					Copy change to the left
+					<ContextMenu.Shortcut>Alt+←</ContextMenu.Shortcut>
+				</ContextMenu.Item>
+			{/if}
+		{/if}
+	</ContextMenu.Content>
 {/snippet}
 
 {#snippet inlineParts(row: DiffRow, parts: RenderedPart[], trailing: boolean, highlights: Highlight[])}
@@ -705,93 +786,116 @@
 				</Button>
 			</div>
 		{/if}
-		<div
-			bind:this={viewport}
-			bind:clientHeight={viewportHeight}
-			bind:clientWidth={viewportWidth}
-			onscroll={onScroll}
-			onpointermove={(event) => {
-				pointerY = event.clientY;
-				trackPointer();
-			}}
-			onpointerleave={() => {
-				pointerY = null;
-				hoveredRow = -1;
-			}}
-			role="presentation"
-			style:tab-size={TAB_SIZE}
-			class="h-full min-w-0 flex-1 overflow-auto font-mono text-[12.5px] leading-5 {wrap ? 'overflow-x-hidden' : ''}"
-		>
-			<!-- Spacer carries the full scroll height; only `visible` is in the DOM.
+		<!-- The viewport is the trigger itself: the wrapper component would stop text being selected. -->
+		<ContextMenu.Root>
+			<ContextMenuPrimitive.Trigger oncontextmenu={onContextMenu}>
+				{#snippet child({ props })}
+					<div
+						{...props}
+						bind:this={viewport}
+						bind:clientHeight={viewportHeight}
+						bind:clientWidth={viewportWidth}
+						onscroll={onScroll}
+						onpointermove={(event) => {
+							pointerY = event.clientY;
+							trackPointer();
+						}}
+						onpointerleave={() => {
+							pointerY = null;
+							hoveredRow = -1;
+						}}
+						role="presentation"
+						style:tab-size={TAB_SIZE}
+						class="h-full min-w-0 flex-1 overflow-auto font-mono text-[12.5px] leading-5 {wrap
+							? 'overflow-x-hidden'
+							: ''}"
+					>
+						<!-- Spacer carries the full scroll height; only `visible` is in the DOM.
          When panning it also carries the horizontal track, while the rows stay
          pinned to the viewport and move their text instead. -->
-			<div
-				style:height="{totalHeight}px"
-				style:width={panned ? `${viewportWidth + panTrack}px` : undefined}
-				class="relative {panned ? '' : wrap ? 'w-full' : 'w-max min-w-full'}"
-			>
-				<div
-					style:transform="translateY({offsetY}px)"
-					style:width={panned ? `${viewportWidth}px` : undefined}
-					class={panned ? 'sticky left-0' : 'absolute inset-x-0 top-0'}
-				>
-					{#each visible as item, offset (item.key)}
-						{@const index = firstVisible + offset}
-						{#if item.kind === 'collapsed'}
+						<div
+							style:height="{totalHeight}px"
+							style:width={panned ? `${viewportWidth + panTrack}px` : undefined}
+							class="relative {panned ? '' : wrap ? 'w-full' : 'w-max min-w-full'}"
+						>
 							<div
-								class="relative flex items-center gap-2 bg-muted/40 px-3 text-muted-foreground select-none"
-								style:height="{LINE_HEIGHT}px"
+								style:transform="translateY({offsetY}px)"
+								style:width={panned ? `${viewportWidth}px` : undefined}
+								class={panned ? 'sticky left-0' : 'absolute inset-x-0 top-0'}
 							>
-								{@render changeMarker(index)}
-								<span class="h-px flex-1 bg-current opacity-20"></span>
-								<span class="text-[11px] tabular-nums"
-									>{formatCount(item.count)}
-									{item.hidden === 'similar' ? 'similar' : 'different'}
-									{item.count === 1 ? 'line' : 'lines'} hidden</span
-								>
-								<span class="h-px flex-1 bg-current opacity-20"></span>
-							</div>
-						{:else if item.kind === 'row'}
-							<div class="relative flex">
-								{@render changeMarker(index)}
-								{@render copyButtons(index)}
-								<span class="{gutterClass(item.row)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none">
-									{item.row.oldLine ?? ''}
-								</span>
-								<span class="{gutterClass(item.row)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none">
-									{item.row.newLine ?? ''}
-								</span>
-								<span class="{bodyClass(item.row)} w-4 shrink-0 text-center select-none">
-									{marker(item.row)}
-								</span>
-								{@render cell(item.row, index, 'pr-4', 'row')}
-							</div>
-						{:else}
-							<!-- Rows are 20px and the stripe tile 8px, so each row shifts its stripes to continue the row above's. -->
-							<div class="relative flex" style:--stripe-y="{-(offsets[index] % 8)}px">
-								{@render changeMarker(index)}
-								{@render copyButtons(index)}
-								<!-- Left / original -->
-								<span
-									class="{gutterClass(item.left)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none"
-								>
-									{item.left?.oldLine ?? ''}
-								</span>
-								{@render cell(item.left, index, 'border-r pr-4', 'left')}
+								{#each visible as item, offset (item.key)}
+									{@const index = firstVisible + offset}
+									{#if item.kind === 'collapsed'}
+										<div
+											class="relative flex items-center gap-2 bg-muted/40 px-3 text-muted-foreground select-none"
+											style:height="{LINE_HEIGHT}px"
+										>
+											{@render changeMarker(index)}
+											<span class="h-px flex-1 bg-current opacity-20"></span>
+											<span class="text-[11px] tabular-nums"
+												>{formatCount(item.count)}
+												{item.hidden === 'similar' ? 'similar' : 'different'}
+												{item.count === 1 ? 'line' : 'lines'} hidden</span
+											>
+											<span class="h-px flex-1 bg-current opacity-20"></span>
+										</div>
+									{:else if item.kind === 'row'}
+										<div class="relative flex">
+											{@render changeMarker(index)}
+											{@render copyButtons(index)}
+											<span
+												class="{gutterClass(
+													item.row
+												)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none"
+											>
+												{item.row.oldLine ?? ''}
+											</span>
+											<span
+												class="{gutterClass(
+													item.row
+												)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none"
+											>
+												{item.row.newLine ?? ''}
+											</span>
+											<span class="{bodyClass(item.row)} w-4 shrink-0 text-center select-none">
+												{marker(item.row)}
+											</span>
+											{@render cell(item.row, index, 'pr-4', 'row')}
+										</div>
+									{:else}
+										<!-- Rows are 20px and the stripe tile 8px, so each row shifts its stripes to continue the row above's. -->
+										<div class="relative flex" style:--stripe-y="{-(offsets[index] % 8)}px">
+											{@render changeMarker(index)}
+											{@render copyButtons(index)}
+											<!-- Left / original -->
+											<span
+												class="{gutterClass(
+													item.left
+												)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none"
+											>
+												{item.left?.oldLine ?? ''}
+											</span>
+											{@render cell(item.left, index, 'border-r pr-4', 'left')}
 
-								<!-- Right / changed -->
-								<span
-									class="{gutterClass(item.right)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none"
-								>
-									{item.right?.newLine ?? ''}
-								</span>
-								{@render cell(item.right, index, 'pr-4', 'right')}
+											<!-- Right / changed -->
+											<span
+												class="{gutterClass(
+													item.right
+												)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none"
+											>
+												{item.right?.newLine ?? ''}
+											</span>
+											{@render cell(item.right, index, 'pr-4', 'right')}
+										</div>
+									{/if}
+								{/each}
 							</div>
-						{/if}
-					{/each}
-				</div>
-			</div>
-		</div>
+						</div>
+					</div>
+				{/snippet}
+			</ContextMenuPrimitive.Trigger>
+			{@render contextMenu()}
+		</ContextMenu.Root>
 		<ChangeStrip
 			{marks}
 			total={totalHeight}
