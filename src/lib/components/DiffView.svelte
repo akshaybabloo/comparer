@@ -28,6 +28,7 @@
 	} from '$lib/diff-view-model';
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import ChevronUpIcon from '@lucide/svelte/icons/chevron-up';
+	import CornerDownLeftIcon from '@lucide/svelte/icons/corner-down-left';
 	import XIcon from '@lucide/svelte/icons/x';
 	import type { ChangeRange } from '$lib/text-edit';
 	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
@@ -605,7 +606,9 @@
 		{:else}{part.value}{/if}
 	{/each}
 	{#if trailing && row.missingNewline}
-		<span class="text-muted-foreground italic"> ⏎ no newline at end of file</span>
+		<span class="text-muted-foreground italic">
+			<CornerDownLeftIcon class="inline size-3 align-[-0.125em]" /> no newline at end of file</span
+		>
 	{/if}
 {/snippet}
 

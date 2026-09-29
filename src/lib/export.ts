@@ -64,6 +64,10 @@ function escapeHtml(text: string): string {
 	return text.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 }
 
+// Lucide "corner-down-left", inlined so the report stays self-contained.
+const NEWLINE_ICON =
+	'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 4v7a4 4 0 0 1-4 4H4"/><path d="m9 10-5 5 5 5"/></svg>';
+
 const REPORT_STYLE = `
 :root { color-scheme: light dark; --bg: #fff; --fg: #1f2328; --muted: #6e7781; --line: #d0d7de;
   --add: #e6ffec; --add-strong: #abf2bc; --del: #ffebe9; --del-strong: #ff818266; --gap: #f6f8fa; }
@@ -82,6 +86,7 @@ tr.insert td { background: var(--add); } tr.delete td { background: var(--del); 
 tr.insert em { background: var(--add-strong); font-style: normal; } tr.delete em { background: var(--del-strong); font-style: normal; }
 tr.gap td { background: var(--gap); color: var(--muted); text-align: center; font-family: system-ui, sans-serif; font-size: 12px; }
 .note { color: var(--muted); font-style: italic; }
+.note svg { width: 0.75rem; height: 0.75rem; vertical-align: -0.125em; }
 `;
 
 /** A standalone HTML page showing the changes with `context` lines around them, readable without the app. */
@@ -102,7 +107,7 @@ export function toHtmlReport(rows: DiffRow[], labels: ExportLabels, context = EX
 			const text = row.segments
 				.map((segment) => (segment.emphasized ? `<em>${escapeHtml(segment.value)}</em>` : escapeHtml(segment.value)))
 				.join('');
-			const note = row.missingNewline ? ' <span class="note">⏎ no newline at end of file</span>' : '';
+			const note = row.missingNewline ? ` <span class="note">${NEWLINE_ICON} no newline at end of file</span>` : '';
 			const marker = row.tag === 'insert' ? '+' : row.tag === 'delete' ? '−' : '';
 			body.push(
 				`<tr class="${row.tag}"><td class="num">${row.oldLine ?? ''}</td><td class="num">${row.newLine ?? ''}</td>` +
