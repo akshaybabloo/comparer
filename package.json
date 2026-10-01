@@ -6,7 +6,7 @@
 	"homepage": "https://github.com/akshaybabloo/comparer",
 	"main": ".vite/build/main.js",
 	"private": true,
-	"packageManager": "pnpm@12.7.0",
+	"packageManager": "pnpm@12.8.1",
 	"scripts": {
 		"start": "electron-forge start",
 		"package": "electron-forge package",
