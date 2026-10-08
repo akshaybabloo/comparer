@@ -313,7 +313,7 @@ importers:
         version: 8.71.1(eslint@10.11.0(jiti@2.7.0)(supports-color@8.1.1))(supports-color@8.1.1)(typescript@6.0.3)
       bits-ui:
         specifier: ^2.19.2
-        version: 2.19.3(@internationalized/date@3.12.4)(svelte@5.57.1(@typescript-eslint/types@8.71.1))
+        version: 2.19.5(@internationalized/date@3.12.4)(svelte@5.57.1(@typescript-eslint/types@8.71.1))
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -1421,8 +1421,8 @@ packages:
     engines: {node: '>=6.0.0'}
     hasBin: true
 
-  bits-ui@2.19.3:
-    resolution: {integrity: sha512-04COIqqht1h0YRnVTJVHy3+F8NhzS5x0eSM8eqvavaWmK/GLDTgYJW2h1CA//8hh9vSk4rG7rOvJ3QAIpCuYIw==}
+  bits-ui@2.19.5:
+    resolution: {integrity: sha512-TEwkLSYElE5SE0fIdcItiFPfyg9vrR67N1Mt6VvZCqZo24dwTA1MpGVV3WeyIg7rfVAaZ0So8a0/dcnPngCoew==}
     engines: {node: '>=20'}
     peerDependencies:
       '@internationalized/date': ^3.8.1
@@ -5648,7 +5648,7 @@ snapshots:
 
   baseline-browser-mapping@2.11.23: {}
 
-  bits-ui@2.19.3(@internationalized/date@3.12.4)(svelte@5.57.1(@typescript-eslint/types@8.71.1)):
+  bits-ui@2.19.5(@internationalized/date@3.12.4)(svelte@5.57.1(@typescript-eslint/types@8.71.1)):
     dependencies:
       '@floating-ui/core': 1.8.0
       '@floating-ui/dom': 1.8.0
