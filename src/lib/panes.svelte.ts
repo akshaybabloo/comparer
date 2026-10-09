@@ -25,6 +25,9 @@ export const HIGHLIGHT_LIMIT_BYTES = 2 * 1024 * 1024;
  */
 export const CHUNK_BYTES = 512 * 1024;
 
+/** What text typed into the app is called, having no file to take a name from. */
+export const UNTITLED = 'untitled';
+
 /**
  * One side of the comparison: a text document, an image, or a folder.
  *
@@ -93,6 +96,9 @@ export class PaneState {
 	readonly lineCount = $derived(this.totalLines);
 	readonly isEmpty = $derived(this.docId === null && this.text.length === 0);
 	readonly pendingBytes = $derived(Math.max(0, this.totalSize - this.loadedBytes));
+
+	/** Called after something it was opened from, rather than holding text typed into the app. */
+	readonly named = $derived(this.path !== null || (this.filename !== '' && this.filename !== UNTITLED));
 
 	readonly isFolder = $derived(this.kind === 'folder');
 	readonly isImage = $derived(this.kind === 'image');
@@ -265,7 +271,7 @@ export class PaneState {
 		if (this.text.length === 0 && this.docId === null) return null;
 
 		const text = this.text;
-		const info = await window.comparer.adoptText(this.docId, text, this.filename || 'untitled');
+		const info = await window.comparer.adoptText(this.docId, text, this.filename || UNTITLED);
 		this.#reset(info);
 		this.loadedBytes = info.size;
 		this.fullyLoaded = true;

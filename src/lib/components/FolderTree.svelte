@@ -20,6 +20,7 @@
 	import { formatCount } from '$lib/format';
 	import type { StripLine } from '$lib/minimap';
 	import type { ChangeKind, ChangeMark } from '$lib/line-alignment';
+	import ArrowRightIcon from '@lucide/svelte/icons/arrow-right';
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 	import FileIcon from '@lucide/svelte/icons/file';
 	import FileQuestionMarkIcon from '@lucide/svelte/icons/file-question-mark';
@@ -352,7 +353,7 @@
 		{:else}
 			<span class="flex min-w-0 flex-1 items-center gap-2 px-3">
 				<span class="truncate font-medium" title={leftName}>{leftName}</span>
-				<span class="shrink-0 text-muted-foreground">→</span>
+				<ArrowRightIcon class="size-3.5 shrink-0 text-muted-foreground" />
 				<span class="truncate font-medium" title={rightName}>{rightName}</span>
 				<span class="ml-auto shrink-0 text-muted-foreground tabular-nums">
 					{formatCount(total)}
