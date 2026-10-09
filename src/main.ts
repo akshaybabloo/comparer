@@ -490,7 +490,7 @@ const createWindow = () => {
 		// edge instead of stopping at a strip the page cannot paint.
 		frame: false,
 		webPreferences: {
-			preload: path.join(__dirname, 'preload.js')
+			preload: path.join(__dirname, 'preload.cjs')
 		}
 	});
 
