@@ -11,13 +11,20 @@
 	import FolderTree from '$lib/components/FolderTree.svelte';
 	import ImageDiffView from '$lib/components/ImageDiffView.svelte';
 	import WindowControls from '$lib/components/WindowControls.svelte';
-	import type { DiffResult, FolderDiffResult, FolderProgress, ImageDiffResult, ImageMode } from '$lib/diff-types';
+	import type {
+		DiffResult,
+		DiffSide,
+		FolderDiffResult,
+		FolderProgress,
+		ImageDiffResult,
+		ImageMode
+	} from '$lib/diff-types';
 	import type { DiffFilter } from '$lib/diff-view-model';
 	import type { ChangeRange } from '$lib/text-edit';
 	import { EditorSync } from '$lib/editor-sync.svelte';
 	import { ALL_CHANGES, changeSummary, type ShownChange } from '$lib/folder-tree-model';
 	import { formatBytes, formatCount, formatPercent } from '$lib/format';
-	import { PaneState } from '$lib/panes.svelte';
+	import { PaneState, UNTITLED } from '$lib/panes.svelte';
 	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
 	import ArrowLeftRightIcon from '@lucide/svelte/icons/arrow-left-right';
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
@@ -137,6 +144,11 @@
 	let resultKey = $state('');
 	/** The documents `result` was made from, left and right. */
 	let resultDocs: [DocumentId | null, DocumentId | null] = [null, null];
+	/**
+	 * What the two sides of `result` are called, shown over the diff. Null when neither
+	 * came from a file, and for a file opened from a folder, which the bar over it names.
+	 */
+	let resultNames = $state<{ left: DiffSide; right: DiffSide } | null>(null);
 	/** A passing message, such as where an export was written. Clears itself. */
 	let notice = $state('');
 	let noticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -332,6 +344,7 @@
 				result = next;
 				resultKey = `${leftId}|${rightId}`;
 				resultDocs = [leftId, rightId];
+				resultNames = fromTree ? null : sideNames(a, b);
 				if (!fromTree) remember(leftId, rightId);
 				if (!fromTree) {
 					folderResult = null;
@@ -368,6 +381,16 @@
 		running = false;
 		progress = null;
 		void window.comparer.cancelFolderDiff();
+	}
+
+	/**
+	 * Names the two sides of a text diff after the panes it was made from. Text typed
+	 * into both has no file name to show, so that diff goes unnamed.
+	 */
+	function sideNames(a: PaneState, b: PaneState) {
+		if (!a.named && !b.named) return null;
+		const side = (pane: PaneState): DiffSide => ({ name: pane.filename || UNTITLED, path: pane.path });
+		return { left: side(a), right: side(b) };
 	}
 
 	/** Why two panes cannot be compared, or null when they can. An empty pane counts as text. */
@@ -560,11 +583,16 @@
 		}
 	}
 
-	/** Saves whichever sides of the text diff have unsaved changes. */
-	async function saveDiffPanes() {
+	/** Saves whichever sides of the text diff have unsaved changes, or just the ones given. */
+	async function saveDiffPanes(panes: readonly PaneState[] = diffPanes) {
 		try {
-			for (const pane of diffPanes) {
+			for (const pane of panes) {
 				if (pane.unsaved) await pane.save();
+			}
+			// Saving text under a new name renames its side of the diff — so long as the
+			// editors still hold the documents that diff was made from.
+			if (!entry && left.docId === resultDocs[0] && right.docId === resultDocs[1]) {
+				resultNames = sideNames(left, right);
 			}
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : 'Could not save the file';
@@ -781,12 +809,7 @@
 						<Button
 							variant="outline"
 							size="sm"
-							onclick={() =>
-								void pane
-									.save()
-									.catch(
-										(cause: unknown) => (error = cause instanceof Error ? cause.message : 'Could not save the file')
-									)}
+							onclick={() => void saveDiffPanes([pane])}
 							title={pane.path ? `Save to ${pane.path} (Ctrl+S)` : 'Save as… (Ctrl+S)'}
 						>
 							<SaveIcon class="size-3.5" />
@@ -1076,6 +1099,7 @@
 			<DiffView
 				bind:this={diffView}
 				{result}
+				names={resultNames ?? undefined}
 				mode={diffMode}
 				{wrap}
 				show={diffFilter}

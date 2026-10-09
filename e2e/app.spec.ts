@@ -34,6 +34,11 @@ test.describe('text diff', () => {
 
 		await expect(bar.getByText('5 changes')).toBeVisible();
 
+		// Each side is named after its file, with where that file is on hover.
+		const main = page.locator('main');
+		await expect(main.getByText('left.txt', { exact: true })).toHaveAttribute('title', left);
+		await expect(main.getByText('right.txt', { exact: true })).toHaveAttribute('title', right);
+
 		await bar.getByRole('button', { name: 'Down' }).click();
 		await expect(bar.getByText('1 of 5')).toBeVisible();
 		// The change jumped to is marked, and flashes as the jump lands.

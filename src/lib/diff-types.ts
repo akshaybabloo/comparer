@@ -44,6 +44,13 @@ export type DiffResult = {
 	elapsedMs: number;
 };
 
+/** What one side of a text diff is called, and where it was opened from. */
+export type DiffSide = {
+	name: string;
+	/** Absolute path on disk, or null when it did not come from a file there. */
+	path: string | null;
+};
+
 export type FolderDiffResult = FolderDiff & {
 	elapsedMs: number;
 };

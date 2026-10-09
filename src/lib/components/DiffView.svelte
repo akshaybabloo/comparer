@@ -4,7 +4,7 @@
 	import * as ContextMenu from '$lib/components/ui/context-menu';
 	import { Input } from '$lib/components/ui/input';
 	import { formatCount } from '$lib/format';
-	import type { DiffResult, DiffRow } from '$lib/diff-types';
+	import type { DiffResult, DiffRow, DiffSide } from '$lib/diff-types';
 	import { measureText, type StripCell, type StripLine } from '$lib/minimap';
 	import type { ChangeKind, ChangeMark } from '$lib/line-alignment';
 	import {
@@ -42,6 +42,8 @@
 
 	type Props = {
 		result: DiffResult;
+		/** What the two sides are called, shown over the diff. Left out, the diff has no heading. */
+		names?: { left: DiffSide; right: DiffSide };
 		mode: 'unified' | 'split';
 		/** Wrap long lines instead of scrolling them horizontally. */
 		wrap: boolean;
@@ -56,7 +58,7 @@
 		oncopy?: (range: ChangeRange, toward: 'left' | 'right') => void;
 	};
 
-	let { result, mode, wrap, show = 'all', documentKey, oncopy }: Props = $props();
+	let { result, names, mode, wrap, show = 'all', documentKey, oncopy }: Props = $props();
 
 	/** Height of a single (unwrapped) line, matching `leading-5`. */
 	const LINE_HEIGHT = 20;
@@ -729,183 +731,208 @@
 	</span>
 {/snippet}
 
-{#if result.identical}
-	<div class="grid h-full place-items-center text-center text-muted-foreground">
-		<div class="space-y-1">
-			<p class="text-sm text-foreground">The two files are identical</p>
-			<p class="text-xs">No differences to show.</p>
-		</div>
-	</div>
-{:else}
-	<div class="relative flex h-full">
-		{#if searchOpen}
-			<div
-				class="absolute top-2 right-20 z-10 flex items-center gap-1 rounded-md border bg-card p-1 shadow-md"
-				role="search"
-			>
-				<Input
-					bind:ref={searchInput}
-					bind:value={query}
-					oninput={onQueryInput}
-					onkeydown={onSearchKeydown}
-					placeholder="Find in diff"
-					aria-label="Find in diff"
-					class="h-7 w-56 text-xs"
-				/>
-				<span class="min-w-20 px-1 text-center text-[11px] text-muted-foreground tabular-nums">
-					{#if !query}
-						&nbsp;
-					{:else if matches.length === 0}
-						No results
-					{:else}
-						{formatCount(currentMatch + 1)} of {formatCount(matches.length)}{matches.length >= MAX_MATCHES ? '+' : ''}
-					{/if}
+{#snippet sideName(side: DiffSide)}
+	<span class="truncate font-medium" title={side.path ?? side.name}>{side.name}</span>
+{/snippet}
+
+<div class="flex h-full flex-col">
+	{#if names}
+		<!-- Kept out of the scrolling element, whose height and offsets the rows on screen are worked out from. -->
+		<div class="flex h-7 shrink-0 border-b bg-card text-xs">
+			{#if mode === 'split' && !result.identical}
+				<!-- As wide as the rows, which stop short of the scrollbar and the change strip,
+				     so each name sits over its own half. -->
+				<div class="flex w-full min-w-0" style:width={viewportWidth > 0 ? `${viewportWidth}px` : undefined}>
+					<span class="flex min-w-0 flex-1 items-center border-r px-3">{@render sideName(names.left)}</span>
+					<span class="flex min-w-0 flex-1 items-center px-3">{@render sideName(names.right)}</span>
+				</div>
+			{:else}
+				<span class="flex min-w-0 flex-1 items-center gap-2 px-3">
+					{@render sideName(names.left)}
+					<ArrowRightIcon class="size-3.5 shrink-0 text-muted-foreground" />
+					{@render sideName(names.right)}
 				</span>
-				<Button
-					variant="ghost"
-					size="icon-sm"
-					onclick={() => stepMatch(-1)}
-					disabled={matches.length === 0}
-					title="Previous match (Shift+Enter)"
-					aria-label="Previous match"
-				>
-					<ChevronUpIcon class="size-3.5" />
-				</Button>
-				<Button
-					variant="ghost"
-					size="icon-sm"
-					onclick={() => stepMatch(1)}
-					disabled={matches.length === 0}
-					title="Next match (Enter)"
-					aria-label="Next match"
-				>
-					<ChevronDownIcon class="size-3.5" />
-				</Button>
-				<Button variant="ghost" size="icon-sm" onclick={closeSearch} title="Close (Esc)" aria-label="Close search">
-					<XIcon class="size-3.5" />
-				</Button>
+			{/if}
+		</div>
+	{/if}
+	{#if result.identical}
+		<div class="grid min-h-0 flex-1 place-items-center text-center text-muted-foreground">
+			<div class="space-y-1">
+				<p class="text-sm text-foreground">The two files are identical</p>
+				<p class="text-xs">No differences to show.</p>
 			</div>
-		{/if}
-		<!-- The viewport is the trigger itself: the wrapper component would stop text being selected. -->
-		<ContextMenu.Root>
-			<ContextMenuPrimitive.Trigger oncontextmenu={onContextMenu}>
-				{#snippet child({ props })}
-					<div
-						{...props}
-						bind:this={viewport}
-						bind:clientHeight={viewportHeight}
-						bind:clientWidth={viewportWidth}
-						onscroll={onScroll}
-						onpointermove={(event) => {
-							pointerY = event.clientY;
-							trackPointer();
-						}}
-						onpointerleave={() => {
-							pointerY = null;
-							hoveredRow = -1;
-						}}
-						role="presentation"
-						style:tab-size={TAB_SIZE}
-						class="h-full min-w-0 flex-1 overflow-auto font-mono text-[12.5px] leading-5 {wrap
-							? 'overflow-x-hidden'
-							: ''}"
+		</div>
+	{:else}
+		<div class="relative flex min-h-0 flex-1">
+			{#if searchOpen}
+				<div
+					class="absolute top-2 right-20 z-10 flex items-center gap-1 rounded-md border bg-card p-1 shadow-md"
+					role="search"
+				>
+					<Input
+						bind:ref={searchInput}
+						bind:value={query}
+						oninput={onQueryInput}
+						onkeydown={onSearchKeydown}
+						placeholder="Find in diff"
+						aria-label="Find in diff"
+						class="h-7 w-56 text-xs"
+					/>
+					<span class="min-w-20 px-1 text-center text-[11px] text-muted-foreground tabular-nums">
+						{#if !query}
+							&nbsp;
+						{:else if matches.length === 0}
+							No results
+						{:else}
+							{formatCount(currentMatch + 1)} of {formatCount(matches.length)}{matches.length >= MAX_MATCHES ? '+' : ''}
+						{/if}
+					</span>
+					<Button
+						variant="ghost"
+						size="icon-sm"
+						onclick={() => stepMatch(-1)}
+						disabled={matches.length === 0}
+						title="Previous match (Shift+Enter)"
+						aria-label="Previous match"
 					>
-						<!-- Spacer carries the full scroll height; only `visible` is in the DOM.
+						<ChevronUpIcon class="size-3.5" />
+					</Button>
+					<Button
+						variant="ghost"
+						size="icon-sm"
+						onclick={() => stepMatch(1)}
+						disabled={matches.length === 0}
+						title="Next match (Enter)"
+						aria-label="Next match"
+					>
+						<ChevronDownIcon class="size-3.5" />
+					</Button>
+					<Button variant="ghost" size="icon-sm" onclick={closeSearch} title="Close (Esc)" aria-label="Close search">
+						<XIcon class="size-3.5" />
+					</Button>
+				</div>
+			{/if}
+			<!-- The viewport is the trigger itself: the wrapper component would stop text being selected. -->
+			<ContextMenu.Root>
+				<ContextMenuPrimitive.Trigger oncontextmenu={onContextMenu}>
+					{#snippet child({ props })}
+						<div
+							{...props}
+							bind:this={viewport}
+							bind:clientHeight={viewportHeight}
+							bind:clientWidth={viewportWidth}
+							onscroll={onScroll}
+							onpointermove={(event) => {
+								pointerY = event.clientY;
+								trackPointer();
+							}}
+							onpointerleave={() => {
+								pointerY = null;
+								hoveredRow = -1;
+							}}
+							role="presentation"
+							style:tab-size={TAB_SIZE}
+							class="h-full min-w-0 flex-1 overflow-auto font-mono text-[12.5px] leading-5 {wrap
+								? 'overflow-x-hidden'
+								: ''}"
+						>
+							<!-- Spacer carries the full scroll height; only `visible` is in the DOM.
          When panning it also carries the horizontal track, while the rows stay
          pinned to the viewport and move their text instead. -->
-						<div
-							style:height="{totalHeight}px"
-							style:width={panned ? `${viewportWidth + panTrack}px` : undefined}
-							class="relative {panned ? '' : wrap ? 'w-full' : 'w-max min-w-full'}"
-						>
 							<div
-								style:transform="translateY({offsetY}px)"
-								style:width={panned ? `${viewportWidth}px` : undefined}
-								class={panned ? 'sticky left-0' : 'absolute inset-x-0 top-0'}
+								style:height="{totalHeight}px"
+								style:width={panned ? `${viewportWidth + panTrack}px` : undefined}
+								class="relative {panned ? '' : wrap ? 'w-full' : 'w-max min-w-full'}"
 							>
-								{#each visible as item, offset (item.key)}
-									{@const index = firstVisible + offset}
-									{#if item.kind === 'collapsed'}
-										<div
-											class="relative flex items-center gap-2 bg-muted/40 px-3 text-muted-foreground select-none"
-											style:height="{LINE_HEIGHT}px"
-										>
-											{@render changeMarker(index)}
-											<span class="h-px flex-1 bg-current opacity-20"></span>
-											<span class="text-[11px] tabular-nums"
-												>{formatCount(item.count)}
-												{item.hidden === 'similar' ? 'similar' : 'different'}
-												{item.count === 1 ? 'line' : 'lines'} hidden</span
+								<div
+									style:transform="translateY({offsetY}px)"
+									style:width={panned ? `${viewportWidth}px` : undefined}
+									class={panned ? 'sticky left-0' : 'absolute inset-x-0 top-0'}
+								>
+									{#each visible as item, offset (item.key)}
+										{@const index = firstVisible + offset}
+										{#if item.kind === 'collapsed'}
+											<div
+												class="relative flex items-center gap-2 bg-muted/40 px-3 text-muted-foreground select-none"
+												style:height="{LINE_HEIGHT}px"
 											>
-											<span class="h-px flex-1 bg-current opacity-20"></span>
-										</div>
-									{:else if item.kind === 'row'}
-										<div class="relative flex">
-											{@render changeMarker(index)}
-											{@render copyButtons(index)}
-											<span
-												class="{gutterClass(
-													item.row
-												)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none"
-											>
-												{item.row.oldLine ?? ''}
-											</span>
-											<span
-												class="{gutterClass(
-													item.row
-												)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none"
-											>
-												{item.row.newLine ?? ''}
-											</span>
-											<span class="{bodyClass(item.row)} w-4 shrink-0 text-center select-none">
-												{marker(item.row)}
-											</span>
-											{@render cell(item.row, index, 'pr-4', 'row')}
-										</div>
-									{:else}
-										<!-- Rows are 20px and the stripe tile 8px, so each row shifts its stripes to continue the row above's. -->
-										<div class="relative flex" style:--stripe-y="{-(offsets[index] % 8)}px">
-											{@render changeMarker(index)}
-											{@render copyButtons(index)}
-											<!-- Left / original -->
-											<span
-												class="{gutterClass(
-													item.left
-												)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none"
-											>
-												{item.left?.oldLine ?? ''}
-											</span>
-											{@render cell(item.left, index, 'border-r pr-4', 'left')}
+												{@render changeMarker(index)}
+												<span class="h-px flex-1 bg-current opacity-20"></span>
+												<span class="text-[11px] tabular-nums"
+													>{formatCount(item.count)}
+													{item.hidden === 'similar' ? 'similar' : 'different'}
+													{item.count === 1 ? 'line' : 'lines'} hidden</span
+												>
+												<span class="h-px flex-1 bg-current opacity-20"></span>
+											</div>
+										{:else if item.kind === 'row'}
+											<div class="relative flex">
+												{@render changeMarker(index)}
+												{@render copyButtons(index)}
+												<span
+													class="{gutterClass(
+														item.row
+													)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none"
+												>
+													{item.row.oldLine ?? ''}
+												</span>
+												<span
+													class="{gutterClass(
+														item.row
+													)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none"
+												>
+													{item.row.newLine ?? ''}
+												</span>
+												<span class="{bodyClass(item.row)} w-4 shrink-0 text-center select-none">
+													{marker(item.row)}
+												</span>
+												{@render cell(item.row, index, 'pr-4', 'row')}
+											</div>
+										{:else}
+											<!-- Rows are 20px and the stripe tile 8px, so each row shifts its stripes to continue the row above's. -->
+											<div class="relative flex" style:--stripe-y="{-(offsets[index] % 8)}px">
+												{@render changeMarker(index)}
+												{@render copyButtons(index)}
+												<!-- Left / original -->
+												<span
+													class="{gutterClass(
+														item.left
+													)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none"
+												>
+													{item.left?.oldLine ?? ''}
+												</span>
+												{@render cell(item.left, index, 'border-r pr-4', 'left')}
 
-											<!-- Right / changed -->
-											<span
-												class="{gutterClass(
-													item.right
-												)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none"
-											>
-												{item.right?.newLine ?? ''}
-											</span>
-											{@render cell(item.right, index, 'pr-4', 'right')}
-										</div>
-									{/if}
-								{/each}
+												<!-- Right / changed -->
+												<span
+													class="{gutterClass(
+														item.right
+													)} w-14 shrink-0 pr-2 text-right tabular-nums opacity-70 select-none"
+												>
+													{item.right?.newLine ?? ''}
+												</span>
+												{@render cell(item.right, index, 'pr-4', 'right')}
+											</div>
+										{/if}
+									{/each}
+								</div>
 							</div>
 						</div>
-					</div>
-				{/snippet}
-			</ContextMenuPrimitive.Trigger>
-			{@render contextMenu()}
-		</ContextMenu.Root>
-		<ChangeStrip
-			{marks}
-			total={totalHeight}
-			lineAt={stripLineAt}
-			viewStart={scrollTop}
-			viewEnd={scrollTop + viewportHeight}
-			onjump={(position) => {
-				if (viewport) viewport.scrollTop = position - viewportHeight / 2;
-			}}
-			onscrollby={(delta) => viewport?.scrollBy({ top: delta })}
-		/>
-	</div>
-{/if}
+					{/snippet}
+				</ContextMenuPrimitive.Trigger>
+				{@render contextMenu()}
+			</ContextMenu.Root>
+			<ChangeStrip
+				{marks}
+				total={totalHeight}
+				lineAt={stripLineAt}
+				viewStart={scrollTop}
+				viewEnd={scrollTop + viewportHeight}
+				onjump={(position) => {
+					if (viewport) viewport.scrollTop = position - viewportHeight / 2;
+				}}
+				onscrollby={(delta) => viewport?.scrollBy({ top: delta })}
+			/>
+		</div>
+	{/if}
+</div>
