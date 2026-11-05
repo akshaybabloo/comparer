@@ -8,7 +8,7 @@
 	"private": true,
 	"packageManager": "pnpm@12.16.1",
 	"scripts": {
-		"start": "electron-forge start",
+		"start": "electron-forge start -- --no-sandbox",
 		"package": "electron-forge package",
 		"make": "electron-forge make",
 		"publish": "electron-forge publish",
@@ -49,7 +49,7 @@
 		"@typescript-eslint/parser": "^8.71.2",
 		"bits-ui": "^2.19.2",
 		"clsx": "^2.1.1",
-		"electron": "45.2.1",
+		"electron": "45.2.2",
 		"eslint": "^10.10.0",
 		"eslint-config-prettier": "^10.1.8",
 		"eslint-plugin-import": "^2.32.0",
