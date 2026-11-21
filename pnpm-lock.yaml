@@ -352,10 +352,10 @@ importers:
         version: 4.3.0(prettier@3.10.1)(typescript@6.0.3)
       prettier-plugin-svelte:
         specifier: ^4.1.1
-        version: 4.1.1(prettier@3.10.1)(svelte@5.57.3(@typescript-eslint/types@8.73.0))
+        version: 4.2.0(prettier@3.10.1)(svelte@5.57.3(@typescript-eslint/types@8.73.0))
       prettier-plugin-tailwindcss:
         specifier: ^0.8.1
-        version: 0.8.1(prettier-plugin-organize-imports@4.3.0(prettier@3.10.1)(typescript@6.0.3))(prettier-plugin-svelte@4.1.1(prettier@3.10.1)(svelte@5.57.3(@typescript-eslint/types@8.73.0)))(prettier@3.10.1)
+        version: 0.8.1(prettier-plugin-organize-imports@4.3.0(prettier@3.10.1)(typescript@6.0.3))(prettier-plugin-svelte@4.2.0(prettier@3.10.1)(svelte@5.57.3(@typescript-eslint/types@8.73.0)))(prettier@3.10.1)
       shadcn-svelte:
         specifier: ^1.6.1
         version: 1.8.1(svelte@5.57.3(@typescript-eslint/types@8.73.0))
@@ -2518,8 +2518,8 @@ packages:
       vue-tsc:
         optional: true
 
-  prettier-plugin-svelte@4.1.1:
-    resolution: {integrity: sha512-wXvbXMjSvb4C9ENWTHXyd+ihakKCsJ6rJhLP6/8HFNj4GkZr48jqL9PoKsl2sk7SyCZRTnJ7O2TTowUpOxP/KA==}
+  prettier-plugin-svelte@4.2.0:
+    resolution: {integrity: sha512-VgUFSR6+7/KLloVSIgKMwY/9OFxaixY/xsOBUCP95ZKaxSa6JBtLKzq6L1L/Tw6Jc1C7K+op7D1Yu5qD+YdPHA==}
     engines: {node: '>=20'}
     peerDependencies:
       prettier: ^3.0.0
@@ -5761,17 +5761,17 @@ snapshots:
       prettier: 3.10.1
       typescript: 6.0.3
 
-  prettier-plugin-svelte@4.1.1(prettier@3.10.1)(svelte@5.57.3(@typescript-eslint/types@8.73.0)):
+  prettier-plugin-svelte@4.2.0(prettier@3.10.1)(svelte@5.57.3(@typescript-eslint/types@8.73.0)):
     dependencies:
       prettier: 3.10.1
       svelte: 5.57.3(@typescript-eslint/types@8.73.0)
 
-  prettier-plugin-tailwindcss@0.8.1(prettier-plugin-organize-imports@4.3.0(prettier@3.10.1)(typescript@6.0.3))(prettier-plugin-svelte@4.1.1(prettier@3.10.1)(svelte@5.57.3(@typescript-eslint/types@8.73.0)))(prettier@3.10.1):
+  prettier-plugin-tailwindcss@0.8.1(prettier-plugin-organize-imports@4.3.0(prettier@3.10.1)(typescript@6.0.3))(prettier-plugin-svelte@4.2.0(prettier@3.10.1)(svelte@5.57.3(@typescript-eslint/types@8.73.0)))(prettier@3.10.1):
     dependencies:
       prettier: 3.10.1
     optionalDependencies:
       prettier-plugin-organize-imports: 4.3.0(prettier@3.10.1)(typescript@6.0.3)
-      prettier-plugin-svelte: 4.1.1(prettier@3.10.1)(svelte@5.57.3(@typescript-eslint/types@8.73.0))
+      prettier-plugin-svelte: 4.2.0(prettier@3.10.1)(svelte@5.57.3(@typescript-eslint/types@8.73.0))
 
   prettier@3.10.1: {}
 
